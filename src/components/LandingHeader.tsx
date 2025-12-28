@@ -1,9 +1,9 @@
 "use client"
 
 import React, { useState } from 'react';
-import { useTheme } from '@/components/theme-provider';
+import { ModeToggle } from '@/components/toggleTheme';
 import { Button } from '@/components/ui/button';
-import { Menu, Sun, X } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 
@@ -11,12 +11,7 @@ const LandingHeader: React.FC = () => {
 
   const router = useRouter()
   const { data: session } = useSession()
-  const { theme, setTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
-  const themeOptions = [
-    { value: 'theme-minimal', label: 'Minimal', icon: Sun },
-  ];
 
   return (
     <header className="w-full py-4 px-4 md:px-8 flex items-center justify-between relative">
@@ -38,21 +33,7 @@ const LandingHeader: React.FC = () => {
 
         <div className="flex items-center gap-3">
           <div className="relative group">
-            <Button
-              variant="outline"
-              size="sm"
-              className="flex items-center gap-2"
-              onClick={() => {
-                const currentIndex = themeOptions.findIndex(t => t.value === theme);
-                const nextIndex = (currentIndex + 1) % themeOptions.length;
-                setTheme(themeOptions[nextIndex]?.value as any);
-              }}
-            >
-              {React.createElement(themeOptions.find(t => t.value === theme)?.icon || Sun, {
-                className: "h-4 w-4"
-              })}
-              <span className="hidden sm:inline">{themeOptions.find(t => t.value === theme)?.label}</span>
-            </Button>
+            <ModeToggle />
           </div>
 
           <Button variant="outline" className="border-primary hover:bg-primary hover:text-primary-foreground transition-colors" onClick={() => router.push(session ? "/dashboard" : "/sign-in")}>
@@ -89,18 +70,7 @@ const LandingHeader: React.FC = () => {
 
           <div className="space-y-3">
             <div className="flex flex-wrap gap-2">
-              {themeOptions.map((option) => (
-                <Button
-                  key={option.value}
-                  variant={theme === option.value ? "default" : "outline"}
-                  size="sm"
-                  className="flex items-center gap-2"
-                  onClick={() => setTheme(option.value as any)}
-                >
-                  {React.createElement(option.icon, { className: "h-4 w-4" })}
-                  {option.label}
-                </Button>
-              ))}
+              <ModeToggle />
             </div>
 
             <div className="flex gap-2 pt-2">
