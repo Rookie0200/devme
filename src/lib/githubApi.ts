@@ -25,7 +25,7 @@ export const getCommitHash = async (
       new Date(a.commit.author?.date).getTime(),
   );
 
-  return sortedCommits.slice(0, 15).map((commit: any) => ({
+  return sortedCommits.slice(0, 10).map((commit: any) => ({
     commitHash: commit.sha as string,
     commitMessage: commit.commit.message ?? "",
     commitAuthorName: commit.commit.author.name ?? "",
@@ -51,10 +51,11 @@ export const pollCommits = async (projectId: string) => {
       return summarizeCommit(githubUrl, commit.commitHash);
     }),
   );
-  const summaries = summarizedResponse.map((response) => {
+  const summaries = summarizedResponse.map((response, index) => {
     if (response.status === "fulfilled") {
       return response.value as string;
     }
+    console.error(`Failed to summarize commit ${index}:`, response.reason);
     return "";
   });
 
@@ -77,10 +78,19 @@ export const pollCommits = async (projectId: string) => {
 };
 
 async function summarizeCommit(githubUrl: string, commitHash: string) {
-  const { data } = await axios.get(`${githubUrl}/commit/${commitHash}.diff`, {
-    headers: { Accept: "application/vnd.github.v3.diff" },
-  });
-  return aiSummarizeCommit(data) || "";
+  try {
+    console.log(`Fetching diff for commit: ${commitHash}`);
+    const { data } = await axios.get(`${githubUrl}/commit/${commitHash}.diff`, {
+      headers: { Accept: "application/vnd.github.v3.diff" },
+    });
+    console.log(`Diff fetched, size: ${data.length} characters`);
+    const summary = await aiSummarizeCommit(data);
+    console.log(`Summary generated for ${commitHash}`);
+    return summary || "";
+  } catch (error) {
+    console.error(`Error summarizing commit ${commitHash}:`, error);
+    throw error;
+  }
 }
 
 async function getProjectGithubUrl(projectId: string) {
