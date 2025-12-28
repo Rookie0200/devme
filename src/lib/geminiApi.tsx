@@ -4,12 +4,14 @@ if (!process.env.GEMINI_API) {
 }
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API)
 const model = genAI.getGenerativeModel({
-  model: `gemimi-1.5-flash`
+  model: `gemini-2.5-flash`
 })
 
 export const aiSummarizeCommit = async (diff: string) => {
-  const aiResponse = await model.generateContent([
-    `
+  try {
+    console.log('Starting AI summarization...');
+    const aiResponse = await model.generateContent([
+      `
 Please summarise the following diff file:
 
 \`\`\`
@@ -41,12 +43,15 @@ The last comment does not include the file names because there were more than tw
 Do not include parts of the example in your summary.
 It is given only as an example of appropriate comments.
 
-Please summarise the following diff file:
-
-${diff}
-`
-  ])
-  return aiResponse.response.text()
+Please summarise the following diff file:\n\n${diff}`
+    ]);
+    const summary = aiResponse.response.text();
+    console.log('AI summarization successful, length:', summary.length);
+    return summary;
+  } catch (error) {
+    console.error('Error in aiSummarizeCommit:', error);
+    throw error;
+  }
 }
 
 
