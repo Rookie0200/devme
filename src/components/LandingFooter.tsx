@@ -1,21 +1,11 @@
 "use client"
 
 import React from 'react';
-import { useTheme } from '@/components/theme-provider';
 import { Button } from '@/components/ui/button';
-import { Moon, Sun, Code, Monitor } from 'lucide-react';
 
 const LandingFooter: React.FC = () => {
-  const { theme, setTheme } = useTheme();
 
   const currentYear = new Date().getFullYear();
-
-  const themeOptions = [
-    { value: 'theme-minimal', label: 'Minimal', icon: Sun },
-    { value: 'theme-deep-tech', label: 'Deep Tech', icon: Moon },
-    { value: 'theme-dev', label: 'Developer', icon: Code },
-    { value: 'theme-corporate', label: 'Corporate', icon: Monitor },
-  ];
 
   return (
     <footer className="bg-card border-t border-border py-12 w-full">
@@ -91,23 +81,6 @@ const LandingFooter: React.FC = () => {
           <p className="text-sm text-muted-foreground">
             &copy; {currentYear} CommitLytics Inc. All rights reserved.
           </p>
-          <div className="flex items-center gap-3 mt-4 md:mt-0">
-            <p className="text-sm text-muted-foreground">Theme:</p>
-            <div className="flex gap-2">
-              {themeOptions.map((option) => (
-                <Button
-                  key={option.value}
-                  variant={theme === option.value ? "secondary" : "ghost"}
-                  size="icon"
-                  onClick={() => setTheme(option.value as any)}
-                  className="h-8 w-8"
-                  title={option.label}
-                >
-                  {React.createElement(option.icon, { className: "h-4 w-4" })}
-                </Button>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </footer>
