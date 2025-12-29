@@ -1,15 +1,16 @@
-import { GoogleGenerativeAI } from "@google/generative-ai"
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { Document } from "@langchain/core/documents";
 if (!process.env.GEMINI_API) {
-  throw new Error("GEMINI_API is not provided")
+  throw new Error("GEMINI_API is not provided");
 }
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API)
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API);
 const model = genAI.getGenerativeModel({
-  model: `gemini-2.5-flash`
-})
+  model: `gemini-2.5-flash`,
+});
 
 export const aiSummarizeCommit = async (diff: string) => {
   try {
-    console.log('Starting AI summarization...');
+    console.log("Starting AI summarization...");
     const aiResponse = await model.generateContent([
       `
 Please summarise the following diff file:
@@ -43,15 +44,35 @@ The last comment does not include the file names because there were more than tw
 Do not include parts of the example in your summary.
 It is given only as an example of appropriate comments.
 
-Please summarise the following diff file:\n\n${diff}`
+Please summarise the following diff file:\n\n${diff}`,
     ]);
     const summary = aiResponse.response.text();
-    console.log('AI summarization successful, length:', summary.length);
+    console.log("AI summarization successful, length:", summary.length);
     return summary;
   } catch (error) {
-    console.error('Error in aiSummarizeCommit:', error);
+    console.error("Error in aiSummarizeCommit:", error);
     throw error;
   }
+};
+
+export const summariseCode = async (doc: Document) => {
+  console.log("getting summary for", doc.metadata.source);
+  const code = doc.pageContent.slice(0, 1000);
+  const response = await model.generateContent([
+    `You are an intelligent senior software engineer who specialises in onboarding junior software engineer onto projects`,
+    `You are onboarding a new junior software engineer onto a project. You have been given a code snippet from the project along with its file path: ${doc.metadata.source}. Your task is to provide a concise and clear summary of what this code does, its purpose within the project, and any important details that would help the junior engineer understand it quickly.`,
+    `Here is the code snippet:\n\n${code}\n\n`,
+    `Please provide a summary no more than 100 words that would help a junior software engineer understand the code's functionality and purpose within the project. Keep the summary concise and focused on the most important aspects.`,
+  ]);
+  return response.response.text();
+};
+
+
+export async function generateEmbeddingsFromAi(summary:string){
+  const model = genAI.getGenerativeModel({
+    model: "text-embedding-001"
+  })
+  const result = await model.embedContent(summary)
+  const embedding = result.embedding
+  return embedding.values
 }
-
-
