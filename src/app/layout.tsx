@@ -13,7 +13,12 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body>
         <AuthProvider>
-          <ThemeProvider>
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="system"
+            enableSystem
+            disableTransitionOnChange
+          >
             <TRPCReactProvider>{children}</TRPCReactProvider>
             <Toaster richColors />
           </ThemeProvider>

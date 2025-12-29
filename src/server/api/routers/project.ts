@@ -2,6 +2,7 @@ import { client } from "@/server/db"
 import { createTRPCRouter, protectedProcedure } from "../trpc"
 import z from "zod"
 import { pollCommits } from "@/lib/githubApi"
+import { indexGithubRepo } from "@/lib/githubRepoLoader"
 
 export const projectRouter = createTRPCRouter({
   createProject: protectedProcedure.input(
@@ -12,7 +13,6 @@ export const projectRouter = createTRPCRouter({
 
     })
   ).mutation(async ({ ctx, input }) => {
-
     const project = await ctx.client.project.create({
       data: {
         name: input.name,
@@ -24,8 +24,8 @@ export const projectRouter = createTRPCRouter({
         }
       }
     })
+    await indexGithubRepo(project.id, input.githubUrl, input.githubToken)
     await pollCommits(project.id)
-
     return project
   }),
   getProjects: protectedProcedure.query(async ({ ctx }) => {
