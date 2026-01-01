@@ -19,6 +19,16 @@ export const client = globalForPrisma.prisma ?? createPrismaClient();
 
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = client;
 
+// Graceful shutdown handlers for Azure PostgreSQL connections
+const shutdown = async () => {
+  console.log("🔌 Disconnecting from Azure PostgreSQL...");
+  await client.$disconnect();
+  process.exit(0);
+};
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
 // Helper function to execute database operations with retry logic
 export async function withDbRetry<T>(
   operation: () => Promise<T>,
