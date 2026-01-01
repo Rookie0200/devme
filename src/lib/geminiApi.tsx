@@ -8,6 +8,55 @@ const model = genAI.getGenerativeModel({
   model: `gemini-2.5-flash`,
 });
 
+// Rate limiting configuration for free tier (5 requests per minute)
+const RATE_LIMIT_DELAY_MS = 15000; // 15 seconds between requests (safe for 5/min limit)
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY_MS = 60000; // 60 seconds initial retry delay
+
+// Helper function to add delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper function to make API calls with retry logic
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries = MAX_RETRIES,
+  retryDelay = INITIAL_RETRY_DELAY_MS
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    
+    // Check if it's a rate limit error (429)
+    if (errorMessage.includes("429") || errorMessage.includes("Too Many Requests")) {
+      if (retries > 0) {
+        console.log(`⏳ Rate limited. Waiting ${retryDelay / 1000}s before retry... (${retries} retries left)`);
+        await delay(retryDelay);
+        // Exponential backoff: double the delay for next retry
+        return withRetry(fn, retries - 1, retryDelay * 1.5);
+      }
+    }
+    throw error;
+  }
+}
+
+// Track last API call time to enforce rate limiting
+let lastApiCallTime = 0;
+
+async function rateLimitedApiCall<T>(fn: () => Promise<T>): Promise<T> {
+  const now = Date.now();
+  const timeSinceLastCall = now - lastApiCallTime;
+  
+  if (timeSinceLastCall < RATE_LIMIT_DELAY_MS) {
+    const waitTime = RATE_LIMIT_DELAY_MS - timeSinceLastCall;
+    console.log(`⏳ Rate limiting: waiting ${(waitTime / 1000).toFixed(1)}s...`);
+    await delay(waitTime);
+  }
+  
+  lastApiCallTime = Date.now();
+  return withRetry(fn);
+}
+
 export const aiSummarizeCommit = async (diff: string) => {
   try {
     console.log("Starting AI summarization...");
@@ -58,21 +107,27 @@ Please summarise the following diff file:\n\n${diff}`,
 export const summariseCode = async (doc: Document) => {
   console.log("getting summary for", doc.metadata.source);
   const code = doc.pageContent.slice(0, 1000);
-  const response = await model.generateContent([
-    `You are an intelligent senior software engineer who specialises in onboarding junior software engineer onto projects`,
-    `You are onboarding a new junior software engineer onto a project. You have been given a code snippet from the project along with its file path: ${doc.metadata.source}. Your task is to provide a concise and clear summary of what this code does, its purpose within the project, and any important details that would help the junior engineer understand it quickly.`,
-    `Here is the code snippet:\n\n${code}\n\n`,
-    `Please provide a summary no more than 100 words that would help a junior software engineer understand the code's functionality and purpose within the project. Keep the summary concise and focused on the most important aspects.`,
-  ]);
+  
+  const response = await rateLimitedApiCall(() => 
+    model.generateContent([
+      `You are an intelligent senior software engineer who specialises in onboarding junior software engineer onto projects`,
+      `You are onboarding a new junior software engineer onto a project. You have been given a code snippet from the project along with its file path: ${doc.metadata.source}. Your task is to provide a concise and clear summary of what this code does, its purpose within the project, and any important details that would help the junior engineer understand it quickly.`,
+      `Here is the code snippet:\n\n${code}\n\n`,
+      `Please provide a summary no more than 100 words that would help a junior software engineer understand the code's functionality and purpose within the project. Keep the summary concise and focused on the most important aspects.`,
+    ])
+  );
   return response.response.text();
 };
 
 
 export async function generateEmbeddingsFromAi(summary:string){
-  const model = genAI.getGenerativeModel({
-    model: "text-embedding-001"
+  const embeddingModel = genAI.getGenerativeModel({
+    model: "text-embedding-004"
   })
-  const result = await model.embedContent(summary)
+  
+  const result = await rateLimitedApiCall(() => 
+    embeddingModel.embedContent(summary)
+  );
   const embedding = result.embedding
   return embedding.values
 }
