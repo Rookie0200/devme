@@ -1,7 +1,7 @@
 import { client } from "@/server/db";
 import { Octokit } from "octokit";
 import axios from "axios";
-import { aiSummarizeCommit } from "./geminiApi";
+import { aiSummarizeCommit } from "@/lib/groqApi";
 
 export const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN_AUTH,

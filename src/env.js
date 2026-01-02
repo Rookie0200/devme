@@ -16,7 +16,9 @@ export const env = createEnv({
     GOOGLE_CLIENT_ID: z.string().min(1),
     GOOGLE_CLIENT_SECRET: z.string().min(1),
     GITHUB_TOKEN_AUTH: z.string().optional(),
-    GEMINI_API: z.string().optional(),
+    GROQ_API_KEY: z.string().min(1),
+    GROQ_CHAT_MODEL: z.string().optional(),
+    HF_TOKEN: z.string().optional(),
   },
 
   /**
@@ -40,7 +42,9 @@ export const env = createEnv({
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     GITHUB_TOKEN_AUTH: process.env.GITHUB_TOKEN_AUTH,
-    GEMINI_API: process.env.GEMINI_API,
+    GROQ_API_KEY: process.env.GROQ_API_KEY,
+    GROQ_CHAT_MODEL: process.env.GROQ_CHAT_MODEL,
+    HF_TOKEN: process.env.HF_TOKEN,
     // NEXT_PUBLIC_CLIENTVAR: process.env.NEXT_PUBLIC_CLIENTVAR,
   },
   /**
