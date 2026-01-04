@@ -1,34 +1,92 @@
-// "use server";
+"use server";
 
-// import { streamText } from "ai";
-// import { createStreamableValue } from "@ai-sdk/rsc";
-// import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { generateEmbeddingsFromAi } from "@/lib/groqApi";
+import { client } from "@/server/db";
+import { indexGithubRepo } from "@/lib/githubRepoLoader";
 
-// if (!process.env.GOOGLE_API_KEY) {
-//   throw new Error("Missing GOOGLE_API_KEY env var");
-// }
-// const google = createGoogleGenerativeAI({
-//   apiKey: process.env.GOOGLE_API_KEY,
-// });
+// Type for vector search results
+interface SourceCodeMatch {
+  fileName: string;
+  sourceCode: string;
+  summary: string;
+  similarity: number;
+}
 
-// export async function askQuestionAction(question: string, projectId: string) {
-//   const response = await google.chat.completions.create({
-//     model: "gemini-1.5-pro",
-//     messages: [
-//       {
-//         role: "system",
-//         content:
-//           "You are CommitLytic, an AI assistant that helps developers understand their code commits and repositories. Provide concise and accurate answers based on the commit history and repository data.",
-//       },
-//       {
-//         role: "user",
-//         content: question,
-//       },
-//     ],
-//     stream: true,
-//   });
+/**
+ * Search for relevant source code based on a query.
+ * Uses vector similarity search with pgvector.
+ *
+ * @param query - The search query or question
+ * @param projectId - The project ID to search within
+ * @returns Array of matching source code snippets with similarity scores
+ */
+export async function searchCodebase(
+  query: string,
+  projectId: string
+): Promise<SourceCodeMatch[]> {
+  // Generate embedding from the query
+  const queryVector = await generateEmbeddingsFromAi(query);
+  const vectorQuery = `[${queryVector.join(",")}]`;
 
-//   const stream = streamText(response);
+  // Vector similarity search
+  const results = (await client.$queryRaw`
+    SELECT "fileName", "sourceCode", "summary",
+      1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) AS similarity
+    FROM "SourceCodeEmbedding"
+    WHERE 1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) > 0.5
+      AND "projectId" = ${projectId}
+    ORDER BY similarity DESC
+    LIMIT 10
+  `) as SourceCodeMatch[];
 
-//   return createStreamableValue(stream);
-// }
+  return results;
+}
+
+/**
+ * Get the count of indexed files for a project.
+ * Useful for showing indexing status.
+ */
+export async function getIndexedFileCount(projectId: string): Promise<number> {
+  const result = await client.sourceCodeEmbedding.count({
+    where: { projectId },
+  });
+  return result;
+}
+
+/**
+ * Manually trigger re-indexing of a project's repository.
+ * Use this if initial indexing failed or to update embeddings.
+ */
+export async function reindexProject(projectId: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const project = await client.project.findUnique({
+      where: { id: projectId },
+      select: { githubUrl: true, githubToken: true },
+    });
+
+    if (!project) {
+      return { success: false, message: "Project not found" };
+    }
+
+    // Delete existing embeddings first
+    await client.sourceCodeEmbedding.deleteMany({
+      where: { projectId },
+    });
+
+    console.log(`🔄 Re-indexing project: ${projectId}`);
+    
+    // Trigger indexing in background
+    indexGithubRepo(projectId, project.githubUrl, project.githubToken || undefined)
+      .then(() => {
+        console.log(`✅ Re-indexing completed for: ${projectId}`);
+      })
+      .catch((error) => {
+        console.error(`❌ Re-indexing failed for ${projectId}:`, error);
+      });
+
+    return { success: true, message: "Indexing started in background. This may take a few minutes." };
+  } catch (error) {
+    console.error("Error triggering re-index:", error);
+    return { success: false, message: error instanceof Error ? error.message : "Failed to start indexing" };
+  }
+}
