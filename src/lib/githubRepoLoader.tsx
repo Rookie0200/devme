@@ -33,32 +33,53 @@ export const filterDocsForEmbedding = (docs: Document[]): Document[] => {
 }
 
 export const indexGithubRepo = async (projectId:string,githubUrl:string,githubToken?:string)=>{
-    const docs = await loadGithubRepo(githubUrl,githubToken)
-    const filteredDocs = filterDocsForEmbedding(docs)
-    const allEmbeddings = await generateEmbeddings(filteredDocs)
-    
-    // Process embeddings sequentially to avoid connection pool exhaustion
-    for (let index = 0; index < allEmbeddings.length; index++) {
-        const embedding = allEmbeddings[index];
-        console.log(`💾 Saving to database ${index + 1}/${allEmbeddings.length}`)
-        if(!embedding) continue;
+    try {
+        console.log(`📦 Loading repository: ${githubUrl}`);
+        const docs = await loadGithubRepo(githubUrl,githubToken);
+        console.log(`📚 Loaded ${docs.length} files from repository`);
+        
+        const filteredDocs = filterDocsForEmbedding(docs);
+        console.log(`🎯 Processing ${filteredDocs.length} files for embeddings`);
+        
+        if (filteredDocs.length === 0) {
+            console.warn(`⚠️ No files to process for project ${projectId}`);
+            return;
+        }
+        
+        const allEmbeddings = await generateEmbeddings(filteredDocs);
+        console.log(`🧠 Generated ${allEmbeddings.length} embeddings`);
+        
+        // Process embeddings sequentially to avoid connection pool exhaustion
+        for (let index = 0; index < allEmbeddings.length; index++) {
+            const embedding = allEmbeddings[index];
+            console.log(`💾 Saving to database ${index + 1}/${allEmbeddings.length}`)
+            if(!embedding) continue;
 
-        await withDbRetry(async () => {
-            const sourceCodeEmbedding = await client.sourceCodeEmbedding.create({
-                data:{
-                    summary:embedding.summary,
-                    sourceCode:embedding.sourceCode,
-                    fileName:embedding.fileName,
-                    projectId
-                }
-            })
+            await withDbRetry(async () => {
+                const sourceCodeEmbedding = await client.sourceCodeEmbedding.create({
+                    data:{
+                        summary:embedding.summary,
+                        sourceCode:embedding.sourceCode,
+                        fileName:embedding.fileName,
+                        projectId
+                    }
+                })
 
-            await client.$executeRaw`
-            UPDATE "SourceCodeEmbedding"
-            SET "summaryEmbedding" = ${embedding.embedding}::vector
-            WHERE "id" = ${sourceCodeEmbedding.id}
-            `
-        });
+                // Format embedding as pgvector string: [0.1, 0.2, ...]
+                const vectorString = `[${embedding.embedding.join(",")}]`;
+                
+                await client.$executeRaw`
+                UPDATE "SourceCodeEmbedding"
+                SET "summaryEmbedding" = ${vectorString}::vector
+                WHERE "id" = ${sourceCodeEmbedding.id}
+                `
+            });
+        }
+        
+        console.log(`🎉 Indexing complete for project ${projectId}: ${allEmbeddings.length} files indexed`);
+    } catch (error) {
+        console.error(`❌ Error indexing repository for project ${projectId}:`, error);
+        throw error; // Re-throw to let caller handle
     }
 }
 
