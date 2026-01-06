@@ -1,5 +1,6 @@
 "use client";
 
+import MDEditor from "@uiw/react-md-editor";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import useProject from "@/hooks/use-project";
 import { useState, useCallback, useEffect } from "react";
@@ -17,9 +18,19 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronDown, FileCode, Loader2, Send, Sparkles, RefreshCw, AlertCircle } from "lucide-react";
+import {
+  ChevronDown,
+  FileCode,
+  Loader2,
+  Send,
+  Sparkles,
+  RefreshCw,
+  AlertCircle,
+} from "lucide-react";
 import { getIndexedFileCount, reindexProject } from "./actions";
 import { toast } from "sonner";
+import CodeReferences from "./codeRefrences";
+import { api } from "@/trpc/react";
 
 // Type for file references from vector search
 interface FileReference {
@@ -39,6 +50,7 @@ const AskQuestionCard = () => {
   const [answer, setAnswer] = useState("");
   const [indexedCount, setIndexedCount] = useState<number | null>(null);
   const [reindexing, setReindexing] = useState(false);
+  const saveQuestion = api.project.saveQuestion.useMutation();
 
   /**
    * Check indexing status on mount and when project changes
@@ -56,7 +68,7 @@ const AskQuestionCard = () => {
    */
   const handleReindex = useCallback(async () => {
     if (!project?.id) return;
-    
+
     setReindexing(true);
     try {
       const result = await reindexProject(project.id);
@@ -64,7 +76,9 @@ const AskQuestionCard = () => {
         toast.success(result.message);
         // Poll for updated count
         setTimeout(() => {
-          getIndexedFileCount(project.id).then(setIndexedCount).catch(console.error);
+          getIndexedFileCount(project.id)
+            .then(setIndexedCount)
+            .catch(console.error);
         }, 5000);
       } else {
         toast.error(result.message);
@@ -81,6 +95,8 @@ const AskQuestionCard = () => {
    */
   const onSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
+      setAnswer("");
+      setFileReferences([]);
       e.preventDefault();
 
       if (!project?.id || !question.trim()) return;
@@ -145,7 +161,7 @@ const AskQuestionCard = () => {
         setLoading(false);
       }
     },
-    [project?.id, question]
+    [project?.id, question],
   );
 
   /**
@@ -166,16 +182,44 @@ const AskQuestionCard = () => {
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary" />
-              {project?.name} - Q&A
-            </DialogTitle>
+            <div className="item-center flex gap-2">
+              <DialogTitle className="flex items-center gap-2">
+                <Sparkles className="text-primary h-5 w-5" />
+                {project?.name} - Q&A
+              </DialogTitle>
+              <Button
+                disabled={saveQuestion.isPending}
+                variant={"outline"}
+                onClick={() => {
+                  saveQuestion.mutate(
+                    {
+                      projectId: project!.id,
+                      question: question,
+                      answer: answer,
+                      fileReferences: fileReferences,
+                    },
+                    {
+                      onSuccess: () => {
+                        toast.success("Question and answer saved to Q&A!");
+                      },
+                      onError: (err) => {
+                        toast.error(
+                          "Failed to save question and answer: " + err.message,
+                        );
+                      },
+                    },
+                  );
+                }}
+              >
+                Save to Q&A
+              </Button>
+            </div>
           </DialogHeader>
 
           <ScrollArea className="max-h-[50vh] pr-4">
             {/* Loading State */}
             {loading && !answer && (
-              <div className="flex items-center gap-2 text-muted-foreground">
+              <div className="text-muted-foreground flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 <span>Searching codebase and generating response...</span>
               </div>
@@ -183,27 +227,31 @@ const AskQuestionCard = () => {
 
             {/* Error State */}
             {error && (
-              <div className="rounded-md bg-destructive/10 p-4 text-destructive">
+              <div className="bg-destructive/10 text-destructive rounded-md p-4">
                 <p className="font-medium">Error</p>
                 <p className="text-sm">{error}</p>
               </div>
             )}
 
             {/* Answer */}
-            {answer && (
-              <div className="prose prose-sm dark:prose-invert max-w-none">
-                <div className="whitespace-pre-wrap">{answer}</div>
-                {loading && (
-                  <span className="inline-block h-4 w-2 animate-pulse bg-primary" />
-                )}
-              </div>
-            )}
+            <MDEditor.Markdown
+              source={answer}
+              className="h-full max-h-[50vh] max-w-[70vw] overflow-scroll"
+            />
+            <CodeReferences fileReferences={fileReferences} />
+
+            <Button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+              }}
+            ></Button>
           </ScrollArea>
 
           {/* File References */}
           {fileReferences.length > 0 && (
             <Collapsible className="mt-4">
-              <CollapsibleTrigger className="flex w-full items-center justify-between rounded-md bg-muted p-3 hover:bg-muted/80">
+              <CollapsibleTrigger className="bg-muted hover:bg-muted/80 flex w-full items-center justify-between rounded-md p-3">
                 <span className="flex items-center gap-2 text-sm font-medium">
                   <FileCode className="h-4 w-4" />
                   Referenced Files ({fileReferences.length})
@@ -214,17 +262,17 @@ const AskQuestionCard = () => {
                 {fileReferences.map((file, index) => (
                   <div
                     key={index}
-                    className="rounded-md border bg-card p-3 text-sm"
+                    className="bg-card rounded-md border p-3 text-sm"
                   >
                     <div className="flex items-center justify-between">
-                      <code className="font-mono text-xs text-primary">
+                      <code className="text-primary font-mono text-xs">
                         {file.fileName}
                       </code>
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-muted-foreground text-xs">
                         {(file.similarity * 100).toFixed(1)}% match
                       </span>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
+                    <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
                       {file.summary}
                     </p>
                   </div>
@@ -245,7 +293,7 @@ const AskQuestionCard = () => {
             </CardTitle>
             <div className="flex items-center gap-2">
               {indexedCount !== null && (
-                <span className="text-sm text-muted-foreground">
+                <span className="text-muted-foreground text-sm">
                   {indexedCount === 0 ? (
                     <span className="flex items-center gap-1 text-amber-600">
                       <AlertCircle className="h-4 w-4" />
@@ -282,9 +330,10 @@ const AskQuestionCard = () => {
         </CardHeader>
         <CardContent>
           {indexedCount === 0 && (
-            <div className="mb-4 rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-3">
+            <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/20">
               <p className="text-sm text-amber-800 dark:text-amber-200">
-                ⚠️ Your repository hasn't been indexed yet. Click "Index Now" to analyze your codebase before asking questions.
+                ⚠️ Your repository hasn't been indexed yet. Click "Index Now" to
+                analyze your codebase before asking questions.
               </p>
             </div>
           )}
