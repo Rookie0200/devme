@@ -31,6 +31,7 @@ import { getIndexedFileCount, reindexProject } from "./actions";
 import { toast } from "sonner";
 import CodeReferences from "./codeRefrences";
 import { api } from "@/trpc/react";
+import useRefetch from "@/hooks/use-refetch";
 
 // Type for file references from vector search
 interface FileReference {
@@ -175,6 +176,7 @@ const AskQuestionCard = () => {
       // setFileReferences([]);
     }
   };
+  const refetch = useRefetch()
 
   return (
     <>
@@ -201,6 +203,7 @@ const AskQuestionCard = () => {
                     {
                       onSuccess: () => {
                         toast.success("Question and answer saved to Q&A!");
+                        refetch()
                       },
                       onError: (err) => {
                         toast.error(
