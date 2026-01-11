@@ -5,6 +5,7 @@ import { ExternalLink, Github } from "lucide-react";
 import Link from "next/link";
 import CommitLogs from "./commitLogs";
 import AskQuestionCard from "./askQuestionCard";
+import MeetingCard from "./meetingCard";
 
 const dashboard = () => {
   const { project, projects } = useProject();
@@ -51,7 +52,8 @@ const dashboard = () => {
       <div className="mt-4">
         <div className="mt-4 grid-cols-5 gap-4">
           <AskQuestionCard />
-          <Button variant={"outline"}>Create Meeting</Button>
+          {/* <Button variant={"outline"}>Create Meeting</Button> */}
+          <MeetingCard />
         </div>
       </div>
 
