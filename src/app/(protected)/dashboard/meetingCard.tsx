@@ -8,11 +8,19 @@ import { useState } from "react";
 // import { Button } from "react-day-picker";
 import { Button } from "@/components/ui/button";
 import { useDropzone } from "react-dropzone";
+import { api } from "@/trpc/react";
+import useProject from "@/hooks/use-project";
+import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 
 const MeetingCard = () => {
+  const {projectId} = useProject();
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const router = useRouter();
+  const uploadMeeting = api.project.uploadMeeting.useMutation();
   const { getInputProps, getRootProps } = useDropzone({
+
     accept: { "audio/*": [".mp3", ".wav", ".m4a"] },
     multiple: false,
     maxSize: 50_000_000,
@@ -20,7 +28,23 @@ const MeetingCard = () => {
       setIsUploading(true);
       console.log(acceptedFiles);
       const file = acceptedFiles[0];
-      const downloadUrl = await uploadFile(file as File, setProgress);
+      if(!file) return;
+      const downloadUrl = await uploadFile(file as File, setProgress) as string;
+
+      uploadMeeting.mutate({
+        projectId: projectId!,
+        meetingUrl: downloadUrl,
+        name: file?.name,
+      },{
+        onSuccess: ()=>{
+          toast.success("Meeting uploaded successfully!");
+          router.push(`/dashboard/meeting`);
+        },
+        onError: ()=>{
+          toast.error("Error uploading meeting: ");
+        }
+      });
+
       window.alert(downloadUrl);
       setIsUploading(false);
     },
