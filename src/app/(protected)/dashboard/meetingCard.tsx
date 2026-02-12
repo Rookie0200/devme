@@ -12,15 +12,31 @@ import { api } from "@/trpc/react";
 import useProject from "@/hooks/use-project";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { useMutation } from "@tanstack/react-query";
+import axios from "axios";
 
 const MeetingCard = () => {
-  const {projectId} = useProject();
+  const { projectId } = useProject();
+  const processMeeting = useMutation({
+    mutationFn: async (data: {
+      meetingUrl: string;
+      projectId: string;
+      meetingId: string;
+    }) => {
+      const { meetingUrl, projectId, meetingId } = data;
+      const response = await axios.post("/api/process-meeting", {
+        meetingUrl,
+        projectId,
+        meetingId,
+      });
+      return response.data;
+    },
+  });
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const router = useRouter();
   const uploadMeeting = api.project.uploadMeeting.useMutation();
   const { getInputProps, getRootProps } = useDropzone({
-
     accept: { "audio/*": [".mp3", ".wav", ".m4a"] },
     multiple: false,
     maxSize: 50_000_000,
@@ -28,22 +44,33 @@ const MeetingCard = () => {
       setIsUploading(true);
       console.log(acceptedFiles);
       const file = acceptedFiles[0];
-      if(!file) return;
-      const downloadUrl = await uploadFile(file as File, setProgress) as string;
+      if (!file) return;
+      const downloadUrl = (await uploadFile(
+        file as File,
+        setProgress,
+      )) as string;
 
-      uploadMeeting.mutate({
-        projectId: projectId!,
-        meetingUrl: downloadUrl,
-        name: file?.name,
-      },{
-        onSuccess: ()=>{
-          toast.success("Meeting uploaded successfully!");
-          router.push(`/dashboard/meeting`);
+      uploadMeeting.mutate(
+        {
+          projectId: projectId!,
+          meetingUrl: downloadUrl,
+          name: file?.name,
         },
-        onError: ()=>{
-          toast.error("Error uploading meeting: ");
-        }
-      });
+        {
+          onSuccess: (meeting) => {
+            toast.success("Meeting uploaded successfully!");
+            router.push(`/dashboard/meeting`);
+            processMeeting.mutate({
+              meetingUrl: downloadUrl,
+              projectId: projectId!,
+              meetingId: meeting.id,
+            });
+          },
+          onError: () => {
+            toast.error("Error uploading meeting: ");
+          },
+        },
+      );
 
       window.alert(downloadUrl);
       setIsUploading(false);
@@ -87,7 +114,7 @@ const MeetingCard = () => {
               trailColor: "#d1d5db",
             })}
           />
-          <p className="text-sm text-gray-500 text-center"> Uploading...</p>
+          <p className="text-center text-sm text-gray-500"> Uploading...</p>
         </div>
       )}
     </Card>
