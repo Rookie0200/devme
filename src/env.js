@@ -19,6 +19,7 @@ export const env = createEnv({
     GROQ_API_KEY: z.string().min(1),
     GROQ_CHAT_MODEL: z.string().optional(),
     HF_TOKEN: z.string().optional(),
+    ASSEMBLYAI_API_KEY: z.string().min(1),
   },
 
   /**
@@ -45,7 +46,7 @@ export const env = createEnv({
     GROQ_API_KEY: process.env.GROQ_API_KEY,
     GROQ_CHAT_MODEL: process.env.GROQ_CHAT_MODEL,
     HF_TOKEN: process.env.HF_TOKEN,
-    // NEXT_PUBLIC_CLIENTVAR: process.env.NEXT_PUBLIC_CLIENTVAR,
+    ASSEMBLYAI_API_KEY: process.env.ASSEMBLYAI_API_KEY,
   },
   /**
    * Run `build` or `dev` with `SKIP_ENV_VALIDATION` to skip env validation. This is especially
