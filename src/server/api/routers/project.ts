@@ -122,7 +122,7 @@ export const projectRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      return await ctx.client.meeting.create({
+      const meeting = await ctx.client.meeting.create({
         data: {
           projectId: input.projectId,
           meetingUrl: input.meetingUrl,
@@ -130,6 +130,7 @@ export const projectRouter = createTRPCRouter({
           status: "PROCESSING",
         },
       });
+      return meeting;
     }),
   getMeetings: protectedProcedure
     .input(
@@ -145,7 +146,29 @@ export const projectRouter = createTRPCRouter({
         orderBy: {
           createdAt: "desc",
         },
-        include:{issues:true}
+        include: { issues: true },
+      });
+    }),
+  deleteMeeting: protectedProcedure
+    .input(
+      z.object({
+        meetingId: z.string(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      await ctx.client.meeting.delete({
+        where: {
+          id: input.meetingId,
+        },
+      });
+      return { success: true };
+    }),
+  getMeetingById: protectedProcedure
+    .input(z.object({ meetingId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      return await ctx.client.meeting.findUnique({
+        where: { id: input.meetingId },
+        include: { issues: true },
       });
     }),
 });
