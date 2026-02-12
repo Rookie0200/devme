@@ -26,8 +26,8 @@ export function AppSideBar() {
       icon: Bot,
     },
     {
-      title: "Meeting",
-      url: "/dashboard/meeting",
+      title: "Meetings",
+      url: "/dashboard/meetings",
       icon: Presentation,
     },
     {

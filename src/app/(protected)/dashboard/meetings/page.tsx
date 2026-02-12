@@ -1,9 +1,13 @@
+"use client";
+
 import useProject from "@/hooks/use-project";
 import MeetingCard from "../meetingCard";
 import { api } from "@/trpc/react";
 import { Link } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import useRefetch from "@/hooks/use-refetch";
+import { toast } from "sonner";
 
 const meetingPage = () => {
   const { projectId } = useProject();
@@ -11,6 +15,8 @@ const meetingPage = () => {
     { projectId },
     { refetchInterval: 4000 },
   );
+  const deleteMeeting = api.project.deleteMeeting.useMutation();
+  const refetch = useRefetch();
 
   return (
     <>
@@ -54,6 +60,27 @@ const meetingPage = () => {
               <Link href={`/meetings/${meeting.id}`}>
                 <Button variant="outline">View Meeting</Button>
               </Link>
+              <Button
+                disabled={deleteMeeting.isPending}
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  deleteMeeting.mutate(
+                    { meetingId: meeting.id },
+                    {
+                      onSuccess: () => {
+                        toast.success("Meeting deleted successfully!");
+                        refetch();
+                      },
+                      onError: () => {
+                        toast.error("Error deleting meeting");
+                      },
+                    },
+                  );
+                }}
+              >
+                Delete Meeting
+              </Button>
             </div>
           </li>
         ))}
