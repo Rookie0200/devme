@@ -171,4 +171,22 @@ export const projectRouter = createTRPCRouter({
         include: { issues: true },
       });
     }),
+  archiveProject: protectedProcedure
+    .input(z.object({ projectId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      return await ctx.client.project.update({
+        where: { id: input.projectId },
+        data: { deletedAt: new Date() },
+      });
+      // return { success: true };
+    }),
+  getTeamMembers: protectedProcedure
+    .input(z.object({ projectId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const members = await ctx.client.userToProject.findMany({
+        where: { projectId: input.projectId },
+        include: { user: true },
+      });
+      return members.map((member) => member.user);
+    }),
 });

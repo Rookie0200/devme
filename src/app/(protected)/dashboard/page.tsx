@@ -6,6 +6,9 @@ import Link from "next/link";
 import CommitLogs from "./commitLogs";
 import AskQuestionCard from "./askQuestionCard";
 import MeetingCard from "./meetingCard";
+import ArchiveButton from "@/components/archive-button";
+import InviteButton from "@/components/invite-button";
+import TeamMembers from "@/components/team-members";
 
 const dashboard = () => {
   const { project, projects } = useProject();
@@ -44,9 +47,9 @@ const dashboard = () => {
         <div className="h-2"></div>
         {/* Features Button */}
         <div className="flex items-center gap-2">
-          <Button variant={"outline"}>team members</Button>
-          <Button variant={"outline"}>Archive Button</Button>
-          <Button variant={"outline"}>Invitaiton Button</Button>
+          <TeamMembers />
+          <ArchiveButton />
+          <InviteButton />
         </div>
       </div>
       <div className="mt-4">
