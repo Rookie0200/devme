@@ -29,7 +29,7 @@ export async function searchCodebase(
   const vectorQuery = `[${queryVector.join(",")}]`;
 
   // Vector similarity search
-  const results = (await client.$queryRaw`
+  const results = await client.$queryRaw<SourceCodeMatch[]>`
     SELECT "fileName", "sourceCode", "summary",
       1 - ("summaryEmbedding" <=> ${vectorQuery}::vector) AS similarity
     FROM "SourceCodeEmbedding"
@@ -37,7 +37,7 @@ export async function searchCodebase(
       AND "projectId" = ${projectId}
     ORDER BY similarity DESC
     LIMIT 10
-  `) as SourceCodeMatch[];
+  `;
 
   return results;
 }
@@ -61,7 +61,7 @@ export async function reindexProject(projectId: string): Promise<{ success: bool
   try {
     const project = await client.project.findUnique({
       where: { id: projectId },
-      select: { githubUrl: true, githubToken: true },
+      select: { githubUrl: true },
     });
 
     if (!project) {
@@ -76,7 +76,9 @@ export async function reindexProject(projectId: string): Promise<{ success: bool
     console.log(`🔄 Re-indexing project: ${projectId}`);
     
     // Trigger indexing in background
-    indexGithubRepo(projectId, project.githubUrl, project.githubToken || undefined)
+    // No per-project token any more: repository access comes from a GitHub App
+    // installation token. See docs/adr/0001.
+    indexGithubRepo(projectId, project.githubUrl)
       .then(() => {
         console.log(`✅ Re-indexing completed for: ${projectId}`);
       })

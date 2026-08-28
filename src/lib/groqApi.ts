@@ -18,7 +18,7 @@ const groq = new Groq({
 });
 
 // Model selection: 8b for speed/cost, 70b for quality
-const CHAT_MODEL = process.env.GROQ_CHAT_MODEL || "llama-3.1-8b-instant";
+const CHAT_MODEL = process.env.GROQ_CHAT_MODEL ?? "llama-3.1-8b-instant";
 
 // Retry config
 const MAX_RETRIES = 3;
@@ -75,7 +75,7 @@ export const summariseCode = async (doc: Document): Promise<string> => {
     })
   ) as GroqChatResponse;
 
-  return res.choices[0]?.message?.content?.trim() || "";
+  return res.choices[0]?.message?.content?.trim() ?? "";
 };
 
 /**
@@ -104,7 +104,7 @@ export const aiSummarizeCommit = async (diff: string): Promise<string> => {
     })
   ) as GroqChatResponse;
 
-  return res.choices[0]?.message?.content?.trim() || "";
+  return res.choices[0]?.message?.content?.trim() ?? "";
 };
 
 

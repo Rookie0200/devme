@@ -36,6 +36,23 @@ export default tseslint.config(
     },
   },
   {
+    // shadcn/ui components are generated (see components.json) and the
+    // convention in this repo is to regenerate rather than hand-edit them.
+    // Type-aware rules fire on the generated `any`-heavy Recharts and Radix
+    // wrappers; silencing them here keeps `bun run check` meaningful for code
+    // we actually write.
+    files: ["src/components/ui/**/*.tsx"],
+    rules: {
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-argument": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
+      "@typescript-eslint/no-unnecessary-type-assertion": "off",
+      "@typescript-eslint/prefer-nullish-coalescing": "off",
+    },
+  },
+  {
     linterOptions: {
       reportUnusedDisableDirectives: true,
     },

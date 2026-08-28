@@ -11,7 +11,6 @@ export const projectRouter = createTRPCRouter({
       z.object({
         name: z.string(),
         githubUrl: z.string(),
-        githubToken: z.string().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -29,7 +28,7 @@ export const projectRouter = createTRPCRouter({
 
       // Run indexing and commit polling in background (non-blocking)
       console.log(`🚀 Starting background indexing for project: ${project.id}`);
-      indexGithubRepo(project.id, input.githubUrl, input.githubToken)
+      indexGithubRepo(project.id, input.githubUrl)
         .then(() => {
           console.log(`✅ Successfully indexed project: ${project.id}`);
         })
