@@ -392,6 +392,40 @@ describe("states that are reported instead of reviewed", () => {
     ]);
   });
 
+  test("a pull request declined as unlinked is reviewed once its link is added", async () => {
+    const harness = await createHarness({
+      scripts: {
+        "extract-criteria": [extractScript(CRITERIA_142)],
+        produce: [BOTH_SATISFIED],
+      },
+    });
+    seedRepository(harness.github);
+
+    // The same head commit throughout. Editing a pull request body is not a
+    // subscribed action, so the only way back from a decline without pushing
+    // is to reopen — and that fires against the commit that was declined.
+    const sha = "a".repeat(40);
+
+    await harness.deliverPullRequest({
+      body: "Refactors the limiter. No issue for this one.",
+      headSha: sha,
+    });
+    expect(harness.github.soleCommentBody).toContain("does not link an issue");
+
+    await harness.deliverPullRequest({
+      action: "reopened",
+      body: "Closes #142",
+      headSha: sha,
+    });
+
+    // A decline is not an evaluation, so it must not occupy the commit and
+    // block this. Getting that wrong exits silently: no review, no comment,
+    // no error, until someone happens to push again.
+    const body = harness.github.soleCommentBody;
+    expect(body).toContain("**Reviewing against #142**");
+    expect(criterionRows(body)).toHaveLength(2);
+  });
+
   test("an installation with no provider key is told so, and nothing is reviewed", async () => {
     const harness = await createHarness({
       hasProviderKey: false,
