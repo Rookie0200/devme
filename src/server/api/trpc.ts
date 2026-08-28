@@ -12,6 +12,17 @@ import { ZodError } from "zod";
 
 import { client } from "@/server/db";
 import { auth } from "@/auth";
+import type { GitHubIdentity } from "./githubIdentity";
+import { OctokitGitHubIdentity } from "./githubIdentity";
+
+/**
+ * One instance, so that its cache survives between requests. Tests construct
+ * their own, so a cached answer cannot leak from one case into the next.
+ *
+ * Typed as the interface, not the class: the class holds private state, so an
+ * inferred concrete type would make it impossible to substitute a fake.
+ */
+const githubIdentity: GitHubIdentity = new OctokitGitHubIdentity(client);
 
 /**
  * 1. CONTEXT
@@ -31,6 +42,7 @@ export const createTRPCContext = async (opts: { headers: Headers }) => {
   return {
     client,
     session,
+    github: githubIdentity,
     ...opts,
   };
 };

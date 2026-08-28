@@ -22,10 +22,15 @@ bun run db:studio      # prisma studio
 ./start-database.sh    # local Postgres in Docker/Podman, reads DATABASE_URL from .env
 ```
 
-Tests are `bun test`, no extra dependency. The suite lives at `src/server/review/review.test.ts` and
-enters at **one seam**: the GitHub webhook handler. See "The review pipeline" below.
+Tests are `bun test`, no extra dependency. The review suite lives at
+`src/server/review/review.test.ts` and enters at **one seam**: the GitHub webhook handler. A second,
+much narrower seam at `src/server/api/routers/installation.test.ts` pins one authorization property
+and nothing else. See "The review pipeline" below before adding to either.
 
-`bun run check` runs lint with `SKIP_ENV_VALIDATION=1` so the gate needs no secrets; `bun run build`
+`bun run check` sets `SKIP_ENV_VALIDATION=1` for both lint and the tests, so the gate needs no
+secrets — the router tests import `@/env` transitively and would otherwise fail on any `.env`
+missing a required var, which is a property of the local machine rather than of the code.
+`bun run build`
 is what actually validates the env schema.
 
 **`next lint` reports zero errors.** It used to carry a documented baseline of ~72, and that baseline
@@ -46,9 +51,12 @@ meeting transcription, and the cancelled roles workstream were removed in `docs/
 exist only in git history. Vocabulary is defined in `CONTEXT.md`; use it, and note its "Retired
 terms" section, which now lists things genuinely absent rather than merely deprecated.
 
-**The reviewer has no user interface yet.** `/dashboard` is a placeholder. The only way to give an
-Installation a Provider Key is `bun run db:seed-key`. Building the Installation and Provider Key
-surfaces is the next piece of work.
+**The interface is one screen.** `/dashboard` lists the Installations the signed-in user can reach on
+GitHub and lets each one be given, replaced, or stripped of a Provider Key — nothing else. It shows
+a Repository *count* because `installation.list` already returns one; it deliberately shows no
+Repository list, no Review Run history, and no cost reporting, and adding any of those means a new
+router. Review Run history is the next piece of work, and the right home for surfacing a Provider Key
+that has started failing in production.
 
 ### The review pipeline
 
@@ -81,12 +89,33 @@ assert on prompt text, a Producer's intermediate proposal, internal call counts,
 Model output is **scripted, never sampled**, so the suite verifies the pipeline and says nothing
 about whether the model's judgement is good.
 
+There is exactly **one other seam**, and it is not part of the pipeline:
+`src/server/api/routers/installation.test.ts` drives `installationRouter` through a server-side
+caller. It exists for a single property — an Installation the signed-in user cannot reach on GitHub
+answers `NOT_FOUND` and never `FORBIDDEN`, because `FORBIDDEN` confirms to a stranger that the
+Installation is real. That check is load-bearing, subtle enough to look like a mistake, and fails
+silently when lost.
+
+Be clear about what that seam does **not** prove. It runs against a hand-written stub for
+`ctx.client`, so it says nothing about whether the real Prisma queries are correct — the same blind
+spot recorded below for `PrismaReviewStore`. It exercises no part of the dashboard: there is no
+component test, no browser automation, and nothing asserting that a key is masked or that removal
+takes two clicks. Do not grow it into a general router suite; the happy paths are verified by hand
+against a real Installation.
+
 ### The tRPC surface
 
 `src/server/api/root.ts` mounts one router: `src/server/api/routers/installation.ts`, at `/api/trpc`.
 Everything is `protectedProcedure` — the `isAuthenticated` middleware in `src/server/api/trpc.ts`
 narrows `ctx.session` and adds `ctx.user`. `publicProcedure` carries a dev-only artificial delay;
 `protectedProcedure` does not. Add new routers to `root.ts` manually.
+
+**Routers take their dependencies from `ctx`, never from a module import.** `createTRPCContext`
+supplies `client` (Prisma) and `github` (`GitHubIdentity`, which answers *which Installations this
+user can reach* against their own OAuth token). `github` is typed as the interface, not the concrete
+class, so a test can substitute a fake with no cast. Its reachability cache lives **inside** the
+implementation instance rather than at module scope — production shares one instance, and a test
+constructing its own therefore gets an empty cache instead of reading the previous case's answer.
 
 The review pipeline does **not** go through tRPC. It enters at the webhook route handler and runs
 entirely on the worker.
@@ -162,13 +191,21 @@ Background work runs through **BullMQ** against Redis (`REDIS_URL`), with `src/w
   any database holding a Provider Key — `migrate dev` can decide the database needs resetting.
 - The review models require env vars that older `.env` files won't have: `GITHUB_APP_ID`,
   `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_OAUTH_CLIENT_ID`,
-  `GITHUB_OAUTH_CLIENT_SECRET`, `ENCRYPTION_MASTER_KEY`, `REDIS_URL`. `bun run dev` and
-  `bun run build` fail without them; `bun run check` does not.
+  `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_APP_SLUG`, `ENCRYPTION_MASTER_KEY`, `REDIS_URL`.
+  `bun run dev` and `bun run build` fail without them; `bun run check` does not.
 - **Blank summaries still get embedded.** `generateEmbeddings` tolerates a per-file failure by
   pushing `null`, but a summarisation call that returns an *empty string* is not a failure — it gets
   embedded and occupies an index slot carrying no information. There is no guard for this yet.
-- `bun run db:seed-key` is currently the only way to give an Installation a Provider Key. It reads
-  the key from `ANTHROPIC_API_KEY` or a prompt, never from argv, so it stays out of shell history.
+- `bun run db:seed-key` is the **break-glass** path for giving an Installation a Provider Key; the
+  ordinary path is `/dashboard`. It reads the key from `ANTHROPIC_API_KEY` or a prompt, never from
+  argv, so it stays out of shell history. Keep it working — a web outage otherwise means nobody can
+  be onboarded at all.
+- **`installation.list` is a query that writes.** Installation rows are created by the
+  `installation.created` webhook, and GitHub never retries a dropped delivery, so an Installation
+  whose event was missed would be invisible forever. `list` reconciles: anything GitHub reports that
+  has no live row is registered through the same `upsertInstallation` the webhook calls, which also
+  revives a soft-deleted row on reinstall. The framing that makes this correct is that
+  `Installation` is a *cache of GitHub's state*, not a record of our own.
 
 ## Agent skills
 

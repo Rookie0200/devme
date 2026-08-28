@@ -1,43 +1,54 @@
-import { auth, signOut } from "@/auth";
+import Link from "next/link";
+import { TRPCError } from "@trpc/server";
+
+import { env } from "@/env";
+import { api } from "@/trpc/server";
 import { Button } from "@/components/ui/button";
+import { Installations } from "./installations";
 
 /**
- * A deliberate placeholder, not a dashboard.
+ * The Installations a signed-in user can reach, and the Provider Key each one
+ * spends on reviews. This is the only way to configure the reviewer through a
+ * browser; `bun run db:seed-key` remains the break-glass path.
  *
- * The reviewer is driven entirely by GitHub webhooks, so there is nothing an
- * Installation's owner needs to do here yet — but sign-in has to land somewhere
- * that exists. The Installation and Provider Key surfaces are the next piece of
- * work and get their own change; building a first version of them inside the
- * purge would bury them in a commit nobody can read.
+ * The list is fetched here rather than prefetched into the client cache so
+ * that the one error worth acting on — a GitHub authorization that has been
+ * revoked — can be caught and answered with the control that fixes it. Left
+ * to an error boundary it would render as a failure the user cannot do
+ * anything about.
  */
 export default async function DashboardPage() {
-  const session = await auth();
+  let installations;
+  try {
+    installations = await api.installation.list();
+  } catch (error) {
+    if (error instanceof TRPCError && error.code === "UNAUTHORIZED") {
+      return <ReconnectGitHub />;
+    }
+    throw error;
+  }
 
   return (
-    <div className="flex flex-col gap-4">
+    <Installations
+      initialData={installations}
+      installUrl={`https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new`}
+    />
+  );
+}
+
+function ReconnectGitHub() {
+  return (
+    <div className="flex flex-col items-start gap-4">
       <div>
-        <h1 className="text-xl font-semibold">Signed in</h1>
-        <p className="text-muted-foreground text-sm">
-          {session?.user?.email ?? session?.user?.name ?? "Unknown account"}
+        <h2 className="font-medium">Reconnect GitHub</h2>
+        <p className="text-muted-foreground mt-1 text-sm">
+          Your GitHub authorization is no longer valid, so we cannot ask which
+          installations you can reach. Signing in again restores it.
         </p>
       </div>
-
-      <p className="text-sm">
-        devme reviews pull requests against the issues they link. It runs from a
-        GitHub App installation and reports on the pull request itself, so there
-        is nothing to configure here — there is no dashboard yet.
-      </p>
-
-      <form
-        action={async () => {
-          "use server";
-          await signOut({ redirectTo: "/" });
-        }}
-      >
-        <Button type="submit" variant="outline" size="sm">
-          Sign out
-        </Button>
-      </form>
+      <Button asChild>
+        <Link href="/sign-in">Reconnect GitHub</Link>
+      </Button>
     </div>
   );
 }
