@@ -1,22 +1,20 @@
 import NextAuth from "next-auth"
 import { PrismaAdapter } from "@auth/prisma-adapter"
-import Google from "next-auth/providers/google"
+import GitHub from "next-auth/providers/github"
 import { client } from "@/server/db"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(client),
   providers: [
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      authorization: {
-        params: {
-          prompt: "consent",
-          access_type: "offline",
-          response_type: "code"
-        }
-      }
-    })
+    // Dashboard identity only. Repository access comes from a GitHub App
+    // installation token, never from this OAuth token. The `read:org` scope
+    // exists solely so we can ask GitHub which Installations the signed-in
+    // user may see — see docs/adr/0001.
+    GitHub({
+      clientId: process.env.GITHUB_OAUTH_CLIENT_ID!,
+      clientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET!,
+      authorization: { params: { scope: "read:user user:email read:org" } },
+    }),
   ],
   callbacks: {
     async session({ session, user }) {
@@ -27,7 +25,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
   },
   pages: {
-    signIn: '/sign-in',
+    signIn: "/sign-in",
   },
   session: {
     strategy: "database",

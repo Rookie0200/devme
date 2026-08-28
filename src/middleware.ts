@@ -2,12 +2,18 @@ import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 
 export async function middleware(req: NextRequest) {
-  const sessionToken = req.cookies.get('authjs.session-token') || req.cookies.get('__Secure-authjs.session-token')
+  const sessionToken = req.cookies.get('authjs.session-token') ?? req.cookies.get('__Secure-authjs.session-token')
   const isLoggedIn = !!sessionToken
   
-  const isPublicRoute = ['/', '/sign-in', '/sign-up'].some(route => 
-    req.nextUrl.pathname === route || req.nextUrl.pathname.startsWith('/api/auth')
-  )
+  const { pathname } = req.nextUrl
+
+  const isPublicRoute =
+    ['/', '/sign-in', '/sign-up'].includes(pathname) ||
+    pathname.startsWith('/api/auth') ||
+    // GitHub sends no session cookie. This endpoint authenticates itself by
+    // HMAC signature against the shared secret, verified before it does
+    // anything else — see src/server/review/github/webhook.ts.
+    pathname.startsWith('/api/webhooks/')
 
   if (!isLoggedIn && !isPublicRoute) {
     return NextResponse.redirect(new URL('/sign-in', req.url))

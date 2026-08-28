@@ -26,8 +26,8 @@ const shutdown = async () => {
   process.exit(0);
 };
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
 
 // Helper function to execute database operations with retry logic
 export async function withDbRetry<T>(
@@ -68,5 +68,7 @@ export async function withDbRetry<T>(
     }
   }
   
-  throw lastError;
+  // Unreachable: the loop either returns or throws. Satisfies the compiler
+  // without throwing a possibly-null value.
+  throw lastError ?? new Error("withDbRetry exhausted without an error");
 }

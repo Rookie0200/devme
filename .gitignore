@@ -34,6 +34,8 @@ yarn-error.log*
 # local env files
 # do not commit any .env files to git, except for the .env.example file. https://create.t3.gg/en/usage/env-variables#using-environment-variables
 .env
+.env.*
+!.env.example
 
 # vercel
 .vercel
@@ -48,4 +50,11 @@ yarn-error.log*
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?   
+*.sw?
+
+# agent scratch space (local issue tracker, specs, wayfinder maps)
+.scratch/
+
+# research output and working notes, kept locally rather than in the history
+*-research-report.md
+temp-context.md

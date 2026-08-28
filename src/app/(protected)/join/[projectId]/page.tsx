@@ -9,7 +9,7 @@ type Props = {
   }>;
 };
 
-const joinHandler = async (props: Props) => {
+export default async function joinHandler(props: Props) {
   const { projectId } = await props.params;
   const session = await auth();
   const user = session?.user;
@@ -51,7 +51,7 @@ const joinHandler = async (props: Props) => {
     // Optionally, you could redirect to an error page or show a message here
     return redirect(`/dashboard`);
   }
-};
+}
 //   await client.userToProject.create({
 //     data: {
 //       projectId,

@@ -31,7 +31,6 @@ model Project {
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
   deletedAt            DateTime?
-  githubToken          String?
   Commits              Commits[]
   sourceCodeEmbeddings SourceCodeEmbedding[]
   UserToProject        UserToProject[]
@@ -56,8 +55,15 @@ model SourceCodeEmbedding {
   fileName         String
   summary          String
 
-  projectId String
-  project   Project @relation(fields: [projectId], references: [id])
+  // Legacy ownership. Retained until the Project purge lands; new rows are written
+  // against `repository` instead.
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+
+  repositoryId String?
+  repository   Repository? @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@index([repositoryId])
 }
 
 model Meeting {
@@ -150,4 +156,181 @@ model VerificationToken {
 enum MeetingStatus {
   PROCESSING
   COMPLETED
+}
+
+// ---------------------------------------------------------------------------
+// Pull request review
+// ---------------------------------------------------------------------------
+
+/// A grant of access from a GitHub account to this application. The unit of
+/// tenancy: provider keys and repositories belong to an Installation.
+model Installation {
+  id                   String    @id @default(uuid())
+  githubInstallationId BigInt    @unique
+  accountLogin         String
+  accountType          String
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  /// Set when GitHub reports the installation was deleted. Rows are kept so
+  /// that historical Review Runs stay readable.
+  deletedAt            DateTime?
+
+  repositories Repository[]
+  providerKey  ProviderKey?
+}
+
+/// A GitHub repository reachable through an Installation. Discovered from
+/// GitHub, never created by a person inside this application.
+model Repository {
+  id             String   @id @default(uuid())
+  githubRepoId   BigInt   @unique
+  owner          String
+  name           String
+  installationId String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  /// Indexing is lazy — set the first time this repository produces a pull
+  /// request, and again when the Codebase Index finishes building.
+  indexingStartedAt DateTime?
+  indexedAt         DateTime?
+
+  installation Installation @relation(fields: [installationId], references: [id], onDelete: Cascade)
+
+  criteria             AcceptanceCriterion[]
+  reviews              Review[]
+  sourceCodeEmbeddings SourceCodeEmbedding[]
+
+  @@unique([owner, name])
+  @@index([installationId])
+}
+
+/// A single discrete obligation extracted from an Issue. Persisted against the
+/// Issue rather than the Review Run, and keyed to `issueBodyHash` so that an
+/// edited Issue re-extracts while an unedited one is reused.
+model AcceptanceCriterion {
+  id            String   @id @default(uuid())
+  repositoryId  String
+  issueNumber   Int
+  issueTitle    String
+  issueBodyHash String
+  text          String
+  ordinal       Int
+  createdAt     DateTime @default(now())
+
+  repository Repository        @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  results    CriterionResult[]
+
+  @@index([repositoryId, issueNumber])
+}
+
+/// The ongoing assessment of one pull request. Holds the identifier of the
+/// comment it owns so that every Review Run revises that comment in place.
+model Review {
+  id                String   @id @default(uuid())
+  repositoryId      String
+  pullRequestNumber Int
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  /// The single comment this Review owns on the pull request.
+  commentId BigInt?
+
+  /// Set when the Unlinked declining comment has been posted, so that later
+  /// pushes to the same pull request do not repeat it.
+  declinedAt DateTime?
+
+  repository Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  runs       ReviewRun[]
+
+  @@unique([repositoryId, pullRequestNumber])
+}
+
+/// One evaluation of a Review against one specific head commit.
+model ReviewRun {
+  id          String          @id @default(uuid())
+  reviewId    String
+  headSha     String
+  status      ReviewRunStatus @default(running)
+  model       String?
+  costUsd     Float?
+  startedAt   DateTime        @default(now())
+  completedAt DateTime?
+
+  review   Review            @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  results  CriterionResult[]
+  findings Finding[]
+
+  /// Also the duplicate-delivery guard: a second delivery for a head commit
+  /// already processed cannot create a second Run.
+  @@unique([reviewId, headSha])
+}
+
+/// The verdict a Review Run reached on one Acceptance Criterion, with the
+/// Evidence supporting it.
+model CriterionResult {
+  id          String           @id @default(uuid())
+  reviewRunId String
+  criterionId String
+  verdict     CriterionVerdict
+  evidence    String
+
+  /// Where the Verifier located the Evidence. Absent for an absence claim,
+  /// which has no line to point at.
+  evidenceFile      String?
+  evidenceStartLine Int?
+  evidenceEndLine   Int?
+
+  reviewRun ReviewRun           @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+  criterion AcceptanceCriterion @relation(fields: [criterionId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewRunId, criterionId])
+}
+
+/// An observation not tied to an Acceptance Criterion. Sparse at MVP because
+/// only one Producer exists; the table is here so a second Producer is additive.
+model Finding {
+  id          String @id @default(uuid())
+  reviewRunId String
+  producer    String
+  body        String
+
+  evidenceFile      String?
+  evidenceStartLine Int?
+  evidenceEndLine   Int?
+
+  reviewRun ReviewRun @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+
+  @@index([reviewRunId])
+}
+
+/// An Installation's model credential. Encrypted with AES-256-GCM under a
+/// master key held in the environment; the plaintext is never stored, logged,
+/// or returned to a client.
+model ProviderKey {
+  id             String   @id @default(uuid())
+  installationId String   @unique
+  provider       String
+  ciphertext     String
+  iv             String
+  authTag        String
+  /// Last four characters of the plaintext, for display only.
+  hint           String
+  validatedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  installation Installation @relation(fields: [installationId], references: [id], onDelete: Cascade)
+}
+
+enum ReviewRunStatus {
+  running
+  completed
+  failed
+}
+
+enum CriterionVerdict {
+  satisfied
+  unsatisfied
+  unclear
 }

@@ -6,7 +6,7 @@ import { client, withDbRetry } from "@/server/db";
 
 export const loadGithubRepo = async (githubUrl:string,githubToken?:string) =>{
     const loader = new GithubRepoLoader(githubUrl, {
-        accessToken: githubToken || process.env.GITHUB_TOKEN_AUTH,
+        accessToken: githubToken ?? process.env.GITHUB_TOKEN_AUTH,
         ignorePaths:IGNORE_PATHS,
         recursive:true,
         unknown:"warn",
@@ -98,8 +98,9 @@ export const generateEmbeddings = async (docs:Document[])=>{
             results.push({
                 summary,
                 embedding,
-                sourceCode: JSON.parse(JSON.stringify(doc.pageContent)),
-                fileName: doc.metadata.source
+                // `pageContent` is already a string; LangChain's metadata is not typed.
+                sourceCode: String(doc.pageContent),
+                fileName: String(doc.metadata.source)
             });
             
             console.log(`✅ Completed ${i + 1}/${docs.length}`);

@@ -11,7 +11,6 @@ import useRefetch from "@/hooks/use-refetch"
 type formData = {
   name: string,
   githubUrl: string,
-  githubToken?: string
 
 }
 
@@ -27,8 +26,7 @@ export default function Page() {
   function sumbmitHandler(data: formData) {
     createProject.mutate({
       name: data.name,
-      githubUrl: data.githubUrl,
-      githubToken: data.githubToken
+      githubUrl: data.githubUrl
     }, {
       onSuccess: () => {
         toast.success("Project creation success")
@@ -73,11 +71,6 @@ export default function Page() {
                 placeholder="https://github.com/Rookie0200/devme"
                 type="url"
               />
-              <div className="h-2"></div>
-              <Input {...register("githubToken")}
-                placeholder="github:ashoweil@shvowesndopvhrthwopjweowl"
-              />
-
               <div className="h-2"></div>
               <Button type="submit" disabled={createProject.isPending}>
                 Create Project
