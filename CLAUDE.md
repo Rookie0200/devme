@@ -93,9 +93,14 @@ Flow: GitHub webhook → signature verify → enqueue → worker → `runReview`
   transitions it — including the two declines. A decline *is* a Run (`docs/adr/0005`); a system that
   records only its successes cannot explain its silences. Three consequences that are easy to undo
   by accident:
-  - **`startRun` does not block on a `declined` or `failed` Run**, only on `running`/`completed`.
-    Adding a missing Issue link and reopening fires at the *same* head commit, so blocking there
-    makes the pull request permanently unreviewable with no error raised anywhere.
+  - **`startRun` blocks only on `completed`, and on a `running` Run that still looks alive.** A
+    `declined` or `failed` Run is taken over, and so is a `running` one whose worker died — on either
+    the queue reporting a re-delivery (`attemptsStarted > 1`, *not* `attemptsMade`, which a stalled
+    job never increments) or `isRunAbandoned` in `review/runLifecycle.ts`, the same predicate the
+    feed uses to say "interrupted". Adding a missing Issue link and reopening fires at the *same*
+    head commit, and so does every route back from a crash, so blocking there makes the pull request
+    permanently unreviewable with no error raised anywhere. Only `completed` is absolute — that is
+    the guard against charging a Provider Key twice. See the amendment in `docs/adr/0005`.
   - **`hasDeclinedRun` must be read before `startRun`.** Starting a Run supersedes the declined row
     that answers it, so asking afterwards re-renders the declining comment on every push.
   - **The queue does no de-duplication.** It used to, keyed on the head commit, and that claimed a
@@ -122,8 +127,12 @@ about whether the model's judgement is good.
 That rule means **the outcome columns are untested by construction** — `outcomeReason`, cost on a
 failed Run, `Review.title`, and `lastAuthFailureAt` are all rows, and rows are what the suite does
 not assert on. What *is* covered is the behaviour those changes can break from the outside: a
-declined commit still being reviewable after its Issue link is added, and an Unlinked branch not
-being nagged on every push. Both live at the webhook seam. The rest was verified against a real
+declined commit still being reviewable after its Issue link is added, an Unlinked branch not being
+nagged on every push, and an abandoned Run being taken over while a live one is not. All live at the
+webhook seam. The takeover cases need a `running` Run, which the seam cannot produce — the pipeline's
+catch block always writes `failed` — so the harness seeds one. Seeding is *arrange*; the assertions
+are still only on the comment that left the system, and the negative control is what stops all of it
+being satisfied by a guard that simply stopped blocking. The rest was verified against a real
 pull request; do not "fix" the gap by reaching into the fake store.
 
 Outside the pipeline there is a second **category** of test — *router authorization tests* — and it

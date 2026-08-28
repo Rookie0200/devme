@@ -39,8 +39,10 @@ _Avoid_: Review comment, report
 
 **Review Run**:
 The record of one delivery's outcome against one specific head commit. A Review accumulates many Runs as the pull request is pushed to; comparing consecutive Runs is what lets the Review report progress. A Run may conclude without evaluating anything — an Unlinked pull request, or an Installation with no Provider Key, produces a Run that records the decline. See `docs/adr/0005`.
+A Run's row is **reused across attempts** and records only the last one: a Run that declined, failed, or was abandoned when its worker died is taken over in place by the next delivery at that head commit, rather than accumulating a second row. So there is exactly one Run per head commit however many times it was attempted, and history stays a record of pull requests rather than of our outages.
 _Avoid_: Review pass, execution, job
 _Avoid_: treating "Run" as a synonym for "evaluation" — a declined Run evaluated nothing, and that is the point of recording it.
+_Avoid_: reading a Run as the record of a single attempt. That reading is what made an abandoned Run look like a commit that had already been handled.
 
 **Criterion Result**:
 The verdict a Review Run reaches on one Acceptance Criterion — satisfied, unsatisfied, or unclear — together with the evidence supporting it.
