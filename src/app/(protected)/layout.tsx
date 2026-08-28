@@ -1,4 +1,6 @@
+import { signOut } from "@/auth";
 import { ModeToggle } from "@/components/toggleTheme";
+import { Button } from "@/components/ui/button";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
@@ -6,6 +8,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <div className="border-sidebar-border bg-sidebar flex items-center gap-2 rounded-md border p-2 px-4 shadow">
         <span className="text-sm font-medium">devme</span>
         <div className="ml-auto"></div>
+        <form
+          action={async () => {
+            "use server";
+            await signOut({ redirectTo: "/" });
+          }}
+        >
+          <Button type="submit" variant="ghost" size="sm">
+            Sign out
+          </Button>
+        </form>
         <ModeToggle />
       </div>
 
