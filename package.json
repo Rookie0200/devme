@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "next build",
-    "check": "SKIP_ENV_VALIDATION=1 next lint && tsc --noEmit && bun test",
-    "test": "bun test",
+    "check": "SKIP_ENV_VALIDATION=1 next lint && tsc --noEmit && bun run test",
+    "test": "SKIP_ENV_VALIDATION=1 bun test",
     "db:generate": "prisma migrate dev",
     "db:migrate": "prisma migrate deploy",
     "db:push": "prisma db push",

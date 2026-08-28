@@ -24,6 +24,10 @@ export const env = createEnv({
     GITHUB_APP_ID: z.string().min(1),
     GITHUB_APP_PRIVATE_KEY: z.string().min(1),
     GITHUB_WEBHOOK_SECRET: z.string().min(1),
+    // The App's URL slug, used to build the install link the dashboard shows
+    // to a user with no Installations. Server-side deliberately: the page is
+    // a Server Component, so there is no reason to publish it to the bundle.
+    GITHUB_APP_SLUG: z.string().min(1),
 
     // GitHub OAuth establishes dashboard identity only. It grants no
     // repository access.
@@ -68,6 +72,7 @@ export const env = createEnv({
     GITHUB_APP_ID: process.env.GITHUB_APP_ID,
     GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY,
     GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET,
+    GITHUB_APP_SLUG: process.env.GITHUB_APP_SLUG,
     GITHUB_OAUTH_CLIENT_ID: process.env.GITHUB_OAUTH_CLIENT_ID,
     GITHUB_OAUTH_CLIENT_SECRET: process.env.GITHUB_OAUTH_CLIENT_SECRET,
     ENCRYPTION_MASTER_KEY: process.env.ENCRYPTION_MASTER_KEY,
