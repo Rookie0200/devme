@@ -136,6 +136,17 @@ function InstallationCard({ installation }: { installation: Installation }) {
               </span>
             </div>
 
+            {/* Set only when a real Review Run was *refused* on this key —
+                never by a provider that was merely unreachable. Saving a
+                working key clears it, so acting on the warning resolves it. */}
+            {key.lastAuthFailureAt && (
+              <p className="text-destructive text-sm">
+                This key was refused by Anthropic on{" "}
+                {DATE.format(key.lastAuthFailureAt)}, and reviews on this
+                installation have been failing since. Replace it below.
+              </p>
+            )}
+
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
