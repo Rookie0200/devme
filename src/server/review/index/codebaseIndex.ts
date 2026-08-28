@@ -40,11 +40,11 @@ export class PrismaCodebaseIndex implements CodebaseIndex {
     repositoryId: string;
     owner: string;
     repo: string;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const existing = await client.sourceCodeEmbedding.count({
       where: { repositoryId: input.repositoryId },
     });
-    if (existing > 0) return;
+    if (existing > 0) return true;
 
     // A private repository is only readable with an installation token.
     const token = await mintInstallationToken(this.installationGithubId);
@@ -55,6 +55,7 @@ export class PrismaCodebaseIndex implements CodebaseIndex {
 
     const embeddings = await generateEmbeddings(filterDocsForEmbedding(docs));
 
+    let written = 0;
     for (const embedding of embeddings) {
       if (!embedding) continue;
       // `generateEmbeddings` reads these off LangChain document metadata, which
@@ -81,7 +82,14 @@ export class PrismaCodebaseIndex implements CodebaseIndex {
           WHERE "id" = ${row.id}
         `;
       });
+      written += 1;
     }
+
+    // Nothing embedded means the summarisation or embedding provider was
+    // unreachable for every file, not that the repository has no code worth
+    // indexing. Reporting that as a built index would leave the Repository
+    // marked indexed for good, with an empty index and no path back.
+    return written > 0;
   }
 
   async search(input: {

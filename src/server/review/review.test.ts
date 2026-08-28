@@ -431,6 +431,35 @@ describe("states that are reported instead of reviewed", () => {
     );
     expect(criterionRows(harness.github.soleCommentBody)).toHaveLength(2);
   });
+
+  test("a repository whose index failed to build is indexed again next push", async () => {
+    const harness = await createHarness({
+      unindexed: true,
+      scripts: {
+        "extract-criteria": [extractScript(CRITERIA_142), extractScript(CRITERIA_142)],
+        produce: [BOTH_SATISFIED, BOTH_SATISFIED],
+      },
+    });
+    seedRepository(harness.github);
+
+    // The indexing provider is unreachable, so nothing is embedded.
+    harness.index.buildsSuccessfully = false;
+    await harness.deliverPullRequest();
+
+    // The review still runs — the Codebase Index is context, not a
+    // precondition — so the developer gets a report either way.
+    expect(harness.github.soleCommentBody).toContain(
+      "**Reviewing against #142**",
+    );
+
+    // The provider recovers before the next push.
+    harness.index.buildsSuccessfully = true;
+    await harness.deliverPullRequest({ headSha: "b2b2b2b2" });
+
+    // Indexing is attempted again rather than skipped for good. A repository
+    // marked indexed on a failed build would search an empty index forever.
+    expect(harness.index.indexedRepositories).toHaveLength(2);
+  });
 });
 
 describe("webhook ingress", () => {

@@ -129,12 +129,17 @@ export async function runReview(
     if (repository.indexedAt === null) {
       await upsertComment(renderIndexingComment());
       await store.markIndexingStarted(repository.id);
-      await index.ensureIndexed({
+      const indexed = await index.ensureIndexed({
         repositoryId: repository.id,
         owner: job.owner,
         repo: job.repo,
       });
-      await store.markIndexed(repository.id);
+      // Only record success when there is something to search. An indexing
+      // provider outage otherwise marks the Repository indexed permanently,
+      // and every later review runs against an empty index with no retry.
+      // The review still proceeds — the Codebase Index is context, not a
+      // precondition — it is just less informed than it will be next time.
+      if (indexed) await store.markIndexed(repository.id);
     }
 
     // --- Determining the specification ------------------------------------

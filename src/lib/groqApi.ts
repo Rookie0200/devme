@@ -17,8 +17,11 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-// Model selection: 8b for speed/cost, 70b for quality
-const CHAT_MODEL = process.env.GROQ_CHAT_MODEL ?? "llama-3.1-8b-instant";
+// Groq retires hosted models, and a stale default fails as a 404
+// `model_not_found` on every call — which the indexing path swallows per file,
+// so the only symptom is an index that silently never fills. Override with
+// GROQ_CHAT_MODEL; check https://console.groq.com/docs/models when this 404s.
+const CHAT_MODEL = process.env.GROQ_CHAT_MODEL ?? "openai/gpt-oss-20b";
 
 // Retry config
 const MAX_RETRIES = 3;
@@ -71,7 +74,12 @@ export const summariseCode = async (doc: Document): Promise<string> => {
         },
       ],
       temperature: 0.2,
-      max_tokens: 120,
+      // Headroom for a reasoning model. These spend the budget thinking before
+      // emitting anything, so a tight cap returns an *empty* summary rather
+      // than a short one — and an empty summary still gets embedded, taking up
+      // an index slot while carrying no information. 80 words needs ~120; the
+      // rest is the reasoning the cap has to survive.
+      max_tokens: 400,
     })
   ) as GroqChatResponse;
 

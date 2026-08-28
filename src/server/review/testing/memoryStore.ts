@@ -265,10 +265,12 @@ export class InMemoryReviewStore implements ReviewStore {
 export class FakeCodebaseIndex implements CodebaseIndex {
   indexedRepositories: string[] = [];
   context = "";
+  /** Set false to stand in for an indexing provider that was unreachable. */
+  buildsSuccessfully = true;
 
-  ensureIndexed(input: { repositoryId: string }): Promise<void> {
+  ensureIndexed(input: { repositoryId: string }): Promise<boolean> {
     this.indexedRepositories.push(input.repositoryId);
-    return Promise.resolve();
+    return Promise.resolve(this.buildsSuccessfully);
   }
 
   search(): Promise<string> {

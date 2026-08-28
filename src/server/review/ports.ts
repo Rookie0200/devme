@@ -122,12 +122,20 @@ export interface ModelProviderFactory {
  * consume the Installation's Provider Key.
  */
 export interface CodebaseIndex {
-  /** Builds the index if it does not exist. Lazy: called on first review. */
+  /**
+   * Builds the index if it does not exist. Lazy: called on first review.
+   *
+   * Resolves to whether the Repository now has a usable index. The embedding
+   * pipeline tolerates a per-file failure by design, so an outage at the
+   * provider yields an empty index rather than an exception — returning the
+   * outcome is what stops the caller recording that as success and never
+   * retrying.
+   */
   ensureIndexed(input: {
     repositoryId: string;
     owner: string;
     repo: string;
-  }): Promise<void>;
+  }): Promise<boolean>;
 
   /** Excerpts relevant to a query, rendered for inclusion in a prompt. */
   search(input: { repositoryId: string; query: string }): Promise<string>;

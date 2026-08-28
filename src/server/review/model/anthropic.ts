@@ -14,8 +14,16 @@ import type { ModelCompletion, ModelProvider } from "../ports";
  * is a separate, platform-funded pipeline and does not come through this file.
  */
 
-/** Override per Installation later; one model, one tuned prompt suite for now. */
-export const DEFAULT_REVIEW_MODEL = "claude-opus-5";
+/**
+ * Override per Installation later; one model, one tuned prompt suite for now.
+ *
+ * Haiku 4.5 is the deliberate floor: the Verifier, not the Producer's raw
+ * judgement, is what keeps an ungrounded proposal off a pull request, so the
+ * cheapest model that can follow the prompt is the right place to start. Moving
+ * up the range is a decision to make against measured output on a corpus of
+ * real pull requests, not against an assumption that dearer reads better.
+ */
+export const DEFAULT_REVIEW_MODEL = "claude-haiku-4-5";
 
 /**
  * USD per million tokens. Used only to record what a Review Run cost — it is
