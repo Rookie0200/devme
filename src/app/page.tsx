@@ -31,7 +31,8 @@ export default function Home() {
 
       <p className="text-muted-foreground text-sm">
         It installs as a GitHub App and comments on the pull request itself.
-        There is no dashboard yet.
+        Signing in is for one thing: giving an installation the API key its
+        reviews are run with.
       </p>
 
       <div>
