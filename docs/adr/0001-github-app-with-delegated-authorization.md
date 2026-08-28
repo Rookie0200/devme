@@ -4,7 +4,7 @@ Repository access comes from a GitHub App installation rather than a user's OAut
 
 ## Consequences
 
-- There is no `UserToProject`, no owner/admin/member/viewer enum, and no invite tokens — their absence is deliberate, not an oversight. The roles workstream specified in `PROJECT_GUIDE.md` is cancelled outright.
+- There is no `UserToProject`, no owner/admin/member/viewer enum, and no invite tokens — their absence is deliberate, not an oversight. The roles workstream specified in `PROJECT_GUIDE.md` is cancelled outright. (That guide, and the UI that had already been built against it, were deleted in `docs/adr/0004`; both are in git history.)
 - We inherit the customer's own GitHub org permissions, which are the permissions their admins already understand and administer.
 - We cannot grant access to anyone outside the GitHub organisation. This is accepted; the previous unbounded `/join/<projectId>` link was a security defect, not a feature worth preserving.
 - Installation-list lookups hit the GitHub API, so they must be cached per session.

@@ -25,9 +25,10 @@ interface SourceCodeMatch {
 }
 
 /**
- * Matches the threshold `/api/qa` uses, but deliberately *not* its top-5
- * fallback: an empty result here means the Producer gets no codebase context
- * and says so, which is better than feeding it five irrelevant files and
+ * Low, because a Codebase Index match only has to be worth showing the Producer
+ * as context — it is not an answer in itself. Deliberately paired with no
+ * top-N fallback: an empty result means the Producer gets no codebase context
+ * and says so, which is better than feeding it the least-irrelevant files and
  * inviting a confidently wrong verdict.
  */
 const SIMILARITY_THRESHOLD = 0.12;

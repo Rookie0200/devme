@@ -28,19 +28,27 @@ enters at **one seam**: the GitHub webhook handler. See "The review pipeline" be
 `bun run check` runs lint with `SKIP_ENV_VALIDATION=1` so the gate needs no secrets; `bun run build`
 is what actually validates the env schema.
 
-**`next lint` still reports ~72 pre-existing errors**, all in the code slated for the purge (the
-meeting cluster, `githubApi.ts`, the Project dashboard, the cancelled roles UI) or in unrelated
-files (`firebase.ts`). Everything under `src/server/review/` is clean, as are `tsc` and `bun test`.
-Don't let the pre-existing noise mask a new failure — diff the count.
+**`next lint` reports zero errors.** It used to carry a documented baseline of ~72, and that baseline
+is what let two real build breakages hide inside it until `docs/adr/0004` cleared the dead code.
+There is no acceptable-error count any more — if lint reports an error, you introduced it.
 
 `postinstall` runs `prisma generate`. Set `SKIP_ENV_VALIDATION=1` to build without a valid `.env`.
 
+**The suite cannot see changes to persistence.** It drives `InMemoryReviewStore` and
+`FakeCodebaseIndex`, so `PrismaReviewStore` and `PrismaCodebaseIndex` are never exercised. A schema
+change needs a live Review Run against a real pull request as evidence; a green suite is not it.
+
 ## Architecture
 
-DevMe is a T3-stack app (Next.js 15 App Router, tRPC v11, Prisma, Tailwind v4, shadcn/ui). It is
-**mid-pivot**: the product is now a spec-adherence GitHub pull request reviewer (`src/server/review/`),
-and the original Q&A dashboard plus meeting transcription are legacy awaiting the purge. Vocabulary
-for the new product is defined in `CONTEXT.md` — use it, and note its "Retired terms" section.
+DevMe is a T3-stack app (Next.js 15 App Router, tRPC v11, Prisma, Tailwind v4, shadcn/ui). It is a
+spec-adherence GitHub pull request reviewer (`src/server/review/`). The original Q&A dashboard,
+meeting transcription, and the cancelled roles workstream were removed in `docs/adr/0004` — they
+exist only in git history. Vocabulary is defined in `CONTEXT.md`; use it, and note its "Retired
+terms" section, which now lists things genuinely absent rather than merely deprecated.
+
+**The reviewer has no user interface yet.** `/dashboard` is a placeholder. The only way to give an
+Installation a Provider Key is `bun run db:seed-key`. Building the Installation and Provider Key
+surfaces is the next piece of work.
 
 ### The review pipeline
 
@@ -73,34 +81,48 @@ assert on prompt text, a Producer's intermediate proposal, internal call counts,
 Model output is **scripted, never sampled**, so the suite verifies the pipeline and says nothing
 about whether the model's judgement is good.
 
-### Two API surfaces, deliberately split
+### The tRPC surface
 
-- **tRPC** (`src/server/api/routers/project.ts`, mounted at `/api/trpc`) handles all CRUD. Everything is `protectedProcedure` — the `isAuthenticated` middleware in `src/server/api/trpc.ts` narrows `ctx.session` and adds `ctx.user`. `publicProcedure` carries a dev-only artificial delay; `protectedProcedure` does not.
-- **Route handlers** (`src/app/api/qa/route.ts`) handle streaming, which tRPC isn't used for here. `/api/qa` returns a raw `ReadableStream` of Groq tokens and passes the matched source files back out-of-band in an `X-File-References` header (URI-encoded JSON), not in the body.
+`src/server/api/root.ts` mounts one router: `src/server/api/routers/installation.ts`, at `/api/trpc`.
+Everything is `protectedProcedure` — the `isAuthenticated` middleware in `src/server/api/trpc.ts`
+narrows `ctx.session` and adds `ctx.user`. `publicProcedure` carries a dev-only artificial delay;
+`protectedProcedure` does not. Add new routers to `root.ts` manually.
 
-Add new routers to `src/server/api/root.ts` manually.
+The review pipeline does **not** go through tRPC. It enters at the webhook route handler and runs
+entirely on the worker.
 
 ### The AI pipeline
 
-All AI calls go through **`src/lib/groqApi.ts`**: Groq (`llama-3.1-8b-instant` by default, override with `GROQ_CHAT_MODEL`) for chat/summarization, HuggingFace `sentence-transformers/all-mpnet-base-v2` for **768-dimension** embeddings. That dimension is hard-coded in the Prisma schema as `Unsupported("vector(768)")` — changing the embedding model means a migration.
+All AI calls go through **`src/lib/groqApi.ts`**: Groq for chat/summarization, HuggingFace
+`sentence-transformers/all-mpnet-base-v2` for **768-dimension** embeddings. That dimension is
+hard-coded in the Prisma schema as `Unsupported("vector(768)")` — changing the embedding model means
+a migration.
 
-`src/lib/geminiApi.tsx` exports the same three function names (`summariseCode`, `aiSummarizeCommit`, `generateEmbeddingsFromAi`) but **nothing imports it**. It's a dead alternate implementation. When editing AI logic, confirm you're in `groqApi.ts`.
+Groq retires hosted models. A stale default 404s on every call, and because indexing swallows
+per-file failures the only symptom is an index that silently never fills. Override with
+`GROQ_CHAT_MODEL`.
 
 Indexing flow (`src/lib/githubRepoLoader.tsx`):
-1. `loadGithubRepo` — LangChain `GithubRepoLoader` pulls the repo.
-2. `filterDocsForEmbedding` — drops low-value files via `shouldProcessFile` / `IGNORE_PATHS` in `src/lib/utils.ts`.
-3. `generateEmbeddings` — **sequential**, one file at a time, to respect free-tier rate limits. A failure on one file pushes `null` and continues rather than aborting the run.
-4. Rows are written with Prisma, then the vector column is set by a separate `$executeRaw` `UPDATE ... ::vector` — Prisma can't write `Unsupported` columns directly. Both wrapped in `withDbRetry`.
+1. `loadGithubRepo` — LangChain `GithubRepoLoader` pulls the repo. **`githubToken` is required and
+   has no ambient fallback** — Repository access comes from an installation token only, per
+   `docs/adr/0001`.
+2. `filterDocsForEmbedding` — drops low-value files via `shouldProcessFile` / `IGNORE_PATHS` in
+   `src/lib/utils.ts`.
+3. `generateEmbeddings` — **sequential**, one file at a time, to respect free-tier rate limits. A
+   failure on one file pushes `null` and continues rather than aborting the run. This is why
+   `ensureIndexed` returns whether anything was actually written: a provider outage yields an empty
+   index rather than an exception, and recording that as success would strand the Repository.
 
-Commit summarization (`src/lib/githubApi.ts`) follows the same shape: Octokit fetches commits, `filterUnProcessedCommits` diffs against the DB, `aiSummarizeCommit` summarizes.
+### Vector search happens in raw SQL
 
-### Vector search happens in raw SQL, in two places
+`PrismaCodebaseIndex.search` (`src/server/review/index/codebaseIndex.ts`) runs a `$queryRaw`
+cosine-distance query (`1 - (embedding <=> query::vector)`) with a `0.12` threshold and **no top-N
+fallback** — an empty result means the Producer gets no codebase context and says so, which beats
+feeding it the least-irrelevant files.
 
-Both `src/app/api/qa/route.ts` and `searchCodebase` in `src/app/(protected)/dashboard/actions.ts` run near-identical `$queryRaw` cosine-distance queries (`1 - (embedding <=> query::vector)`) — but with **different thresholds**: `/api/qa` uses `> 0.12` with a top-5 fallback when nothing passes; `searchCodebase` uses `> 0.5` with no fallback. If you change retrieval behavior, check whether both need it.
-
-### Background work is fire-and-forget
-
-`createProject` kicks off `indexGithubRepo` and `pollCommits` as unawaited promises with `.catch(console.error)`. `getCommits` re-triggers `pollCommits` on every query. There is no job queue, no status tracking, and no cancellation — indexing progress is only visible in server logs.
+Rows are written with Prisma, then the vector column is set by a separate `$executeRaw`
+`UPDATE ... ::vector` — Prisma can't write `Unsupported` columns directly. Both wrapped in
+`withDbRetry`.
 
 ### Auth
 
@@ -110,7 +132,7 @@ The GitHub OAuth token establishes **dashboard identity only — it grants no re
 
 `src/middleware.ts` guards routes by sniffing the `authjs.session-token` cookie — it does not call `auth()`, so it validates presence, not validity. Public routes: `/`, `/sign-in`, `/sign-up`, `/api/auth/*`. Real authorization lives in `protectedProcedure`.
 
-Routes under `src/app/(protected)/` are the authenticated app; `src/app/page.tsx` plus the `*Section.tsx` components in `src/components/` are the marketing landing page.
+Routes under `src/app/(protected)/` are the authenticated app — currently just the `/dashboard` placeholder. `src/app/page.tsx` is a minimal public landing page.
 
 ### Database
 
@@ -118,9 +140,9 @@ PostgreSQL with the **pgvector** extension (`extensions = [vector]`, `previewFea
 
 The vector column has an **HNSW index** (`vector_cosine_ops`), added in the `20260827090000_pull_request_review` migration — it cannot be expressed in the Prisma schema because the column is `Unsupported`, so it lives in raw migration SQL.
 
-Two ownership models coexist during the pivot: `SourceCodeEmbedding.projectId` is legacy and now nullable; new rows are written against `repositoryId`. Legacy access is user-scoped through `UserToProject`; Project deletion is soft (`deletedAt`), meeting deletion is hard.
+`SourceCodeEmbedding` is owned by `repositoryId` alone. The legacy `projectId` column and the six tables behind it were dropped in `20260828150000_purge_legacy_product`; see `docs/adr/0004`.
 
-Background work runs through **BullMQ** against Redis (`REDIS_URL`), with `src/worker.ts` as a separate process — not the fire-and-forget unawaited promises the legacy indexing path uses. See `docs/adr/0002`.
+Background work runs through **BullMQ** against Redis (`REDIS_URL`), with `src/worker.ts` as a separate process. See `docs/adr/0002`.
 
 ## Conventions
 
@@ -133,12 +155,20 @@ Background work runs through **BullMQ** against Redis (`REDIS_URL`), with `src/w
 
 ## Known gotchas
 
-- `src/app/api/process-meeting/routes.ts` is named `routes.ts`, not `route.ts`, so Next.js never registers it. `meetingCard.tsx` POSTs to `/api/process-meeting` and gets a 404 — meeting processing via AssemblyAI (`src/lib/assembly.ts`) is wired up but unreachable until the file is renamed.
-- `PROJECT_GUIDE.md` (1200 lines) is **stale on three major points now**: it describes Clerk for auth, Google Gemini for AI, and a roles/invites workstream. Auth is Auth.js with **GitHub** OAuth, indexing is Groq + HuggingFace, and the roles workstream is **cancelled outright** by `docs/adr/0001` — access is decided by GitHub's own permissions. Treat those sections as historical.
-- The review models require env vars that legacy `.env` files won't have: `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `ENCRYPTION_MASTER_KEY`, `REDIS_URL`. `bun run dev` and `bun run build` fail without them; `bun run check` does not.
-- The `20260827090000_pull_request_review` migration was **hand-written**, not generated by `prisma migrate dev` — it has to be, for the HNSW index. It has not been applied to any database yet.
-- `AZURE_MIGRATION_GUIDE.md` is a forward-looking proposal (Azure OpenAI, Redis, etc.), not a description of the current system. None of it is implemented.
-- `2a` at the repo root is a stray dump of an old Prisma schema, not a source file.
+- **Two hand-written migrations.** `20260827090000_pull_request_review` (the HNSW index, which the
+  Prisma schema cannot express because the column is `Unsupported`) and
+  `20260828150000_purge_legacy_product` (the row deletion has to run before the column identifying
+  the rows is dropped). Both are applied. Prefer `prisma migrate deploy` over `migrate dev` against
+  any database holding a Provider Key — `migrate dev` can decide the database needs resetting.
+- The review models require env vars that older `.env` files won't have: `GITHUB_APP_ID`,
+  `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_OAUTH_CLIENT_ID`,
+  `GITHUB_OAUTH_CLIENT_SECRET`, `ENCRYPTION_MASTER_KEY`, `REDIS_URL`. `bun run dev` and
+  `bun run build` fail without them; `bun run check` does not.
+- **Blank summaries still get embedded.** `generateEmbeddings` tolerates a per-file failure by
+  pushing `null`, but a summarisation call that returns an *empty string* is not a failure — it gets
+  embedded and occupies an index slot carrying no information. There is no guard for this yet.
+- `bun run db:seed-key` is currently the only way to give an Installation a Provider Key. It reads
+  the key from `ANTHROPIC_API_KEY` or a prompt, never from argv, so it stays out of shell history.
 
 ## Agent skills
 
