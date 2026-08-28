@@ -26,7 +26,9 @@ const installationSelect = {
   accountLogin: true,
   accountType: true,
   deletedAt: true,
-  providerKey: { select: { hint: true, validatedAt: true } },
+  providerKey: {
+    select: { hint: true, validatedAt: true, lastAuthFailureAt: true },
+  },
   _count: { select: { repositories: true } },
 } as const;
 
@@ -135,6 +137,10 @@ export const installationRouter = createTRPCRouter({
           ? {
               hint: row.providerKey.hint,
               validatedAt: row.providerKey.validatedAt,
+              // Only ever set by a Run the provider *refused*, never by one it
+              // could not serve — a warning about a credential that is fine
+              // costs the same trust a false accusation does anywhere else.
+              lastAuthFailureAt: row.providerKey.lastAuthFailureAt,
             }
           : null,
       }));
