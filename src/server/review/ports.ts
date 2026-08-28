@@ -98,6 +98,18 @@ export interface ModelProvider {
     /** Discriminates scripted responses in tests; ignored in production. */
     purpose: "extract-criteria" | "produce";
   }): Promise<ModelCompletion>;
+
+  /**
+   * How a failure raised while spending this Installation's Provider Key
+   * should be recorded on the Review Run.
+   *
+   * Asked of the provider because only it knows its own error shapes. The
+   * orchestrator must not import a vendor's error types — that is the coupling
+   * this port exists to prevent, and it would rot the moment a second provider
+   * is supported. A failure the provider does not recognise as its own is
+   * `internal`, which is always true.
+   */
+  classifyFailure(error: unknown): ReviewOutcomeReason;
 }
 
 /**
@@ -151,6 +163,7 @@ export interface ReviewJob {
   owner: string;
   repo: string;
   pullRequestNumber: number;
+  pullRequestTitle: string;
   headSha: string;
   pullRequestBody: string;
 }
@@ -162,8 +175,10 @@ export interface ReviewJob {
  */
 export interface ReviewQueue {
   /**
-   * Keyed on the pull request at a head commit, so a redelivered webhook is
-   * discarded rather than producing a second Review Run.
+   * Accepts every delivery. De-duplication is **not** done here — a queue key
+   * cannot tell a redelivery from a genuine second attempt at the same commit,
+   * and claiming the commit made a declined pull request unreviewable. The
+   * guard lives in `ReviewStore.startRun`.
    */
   enqueue(job: ReviewJob): Promise<void>;
 }
@@ -192,8 +207,27 @@ export interface ReviewRecord {
   repositoryId: string;
   pullRequestNumber: number;
   commentId: number | null;
-  declinedAt: Date | null;
 }
+
+/**
+ * Why a Review Run ended as it did.
+ *
+ * Stored as a `String` rather than a Postgres enum and narrowed here: this set
+ * is expected to grow, and each new value would otherwise be a migration
+ * against a production database. Nothing writes it but the pipeline.
+ *
+ * `internal` is the honest default. A Verifier bug, a GitHub timeout, and a
+ * genuine provider outage all arrive at the same catch, so anything more
+ * specific is a claim about the world that usually cannot be supported —
+ * and `provider_auth` in particular accuses the customer's credential.
+ */
+export type ReviewOutcomeReason =
+  | "unlinked"
+  | "no_provider_key"
+  | "provider_auth"
+  | "provider_unavailable"
+  | "github_error"
+  | "internal";
 
 export interface StoredCriterionResult {
   criterionKey: string;
@@ -258,10 +292,14 @@ export interface ReviewStore {
   markIndexingStarted(repositoryId: string): Promise<void>;
   markIndexed(repositoryId: string): Promise<void>;
 
-  /** Creates the Review on first sight of the pull request. */
+  /**
+   * Creates the Review on first sight of the pull request, and refreshes the
+   * title on every delivery so a renamed pull request reads correctly.
+   */
   ensureReview(input: {
     repositoryId: string;
     pullRequestNumber: number;
+    title: string;
   }): Promise<ReviewRecord>;
 
   setReviewComment(input: {
@@ -269,11 +307,26 @@ export interface ReviewStore {
     commentId: number;
   }): Promise<void>;
 
-  markDeclined(reviewId: string): Promise<void>;
+  /**
+   * Whether this Review has ever been declined, which is what stops a
+   * long-running Unlinked branch being nagged on every push.
+   *
+   * Deliberately per-Review, not per-commit. **Must be read before
+   * `startRun`**: starting a Run supersedes a declined row for that commit,
+   * so asking afterwards can report `false` for a Review that has plainly
+   * been declined, and the declining comment would be re-rendered.
+   */
+  hasDeclinedRun(reviewId: string): Promise<boolean>;
 
   /**
-   * `null` when a Run for this head commit already exists — the duplicate
-   * delivery guard.
+   * `null` when this head commit has already been evaluated — the duplicate
+   * delivery guard, and what stops a redelivery charging a Provider Key
+   * twice.
+   *
+   * A Run that only *declined* does not block: it was never an evaluation.
+   * That is what lets a pull request declined as Unlinked be reviewed once
+   * its Issue link is added, which fires at the same head commit because
+   * editing a body is not a subscribed action.
    */
   startRun(input: {
     reviewId: string;
@@ -281,7 +334,35 @@ export interface ReviewStore {
   }): Promise<ReviewRunRecord | null>;
 
   completeRun(input: PersistRunInput): Promise<void>;
-  failRun(runId: string): Promise<void>;
+
+  /** Ends a Run that concluded without evaluating anything. */
+  declineRun(input: {
+    runId: string;
+    outcomeReason: Extract<
+      ReviewOutcomeReason,
+      "unlinked" | "no_provider_key"
+    >;
+  }): Promise<void>;
+
+  /**
+   * Ends a Run that tried and broke.
+   *
+   * `costUsd` records spend already incurred — the Producer bills before the
+   * Verifier can throw. Omitted means *unknown*, which is deliberately not
+   * the same as `0`.
+   */
+  failRun(input: {
+    runId: string;
+    outcomeReason: ReviewOutcomeReason;
+    costUsd?: number;
+  }): Promise<void>;
+
+  /**
+   * Records that a real Review Run was refused by the provider on this
+   * Installation's Provider Key, so the dashboard can say so without
+   * re-deriving it. Never called for a provider that was merely unreachable.
+   */
+  recordProviderAuthFailure(installationId: string): Promise<void>;
 
   /** Results of the Run before `beforeRunId`, for the since-last-push diff. */
   previousResults(input: {

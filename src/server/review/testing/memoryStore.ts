@@ -3,6 +3,7 @@ import type {
   InstallationRecord,
   PersistRunInput,
   RepositoryRecord,
+  ReviewOutcomeReason,
   ReviewRecord,
   ReviewRunRecord,
   ReviewStore,
@@ -14,7 +15,9 @@ interface StoredRun {
   id: string;
   reviewId: string;
   headSha: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "declined";
+  outcomeReason: ReviewOutcomeReason | null;
+  costUsd: number | null;
   results: StoredCriterionResult[];
 }
 
@@ -30,6 +33,7 @@ export class InMemoryReviewStore implements ReviewStore {
   private readonly repositories = new Map<string, RepositoryRecord>();
   private readonly reviews = new Map<string, ReviewRecord>();
   private readonly runs: StoredRun[] = [];
+  readonly providerAuthFailures = new Set<string>();
   private readonly criteria = new Map<
     string,
     { hash: string; criteria: Criterion[] }
@@ -113,6 +117,8 @@ export class InMemoryReviewStore implements ReviewStore {
   ensureReview(input: {
     repositoryId: string;
     pullRequestNumber: number;
+    /** Stored by `PrismaReviewStore`; nothing observable here reads it. */
+    title: string;
   }): Promise<ReviewRecord> {
     const key = `${input.repositoryId}#${input.pullRequestNumber}`;
     const existing = this.reviews.get(key);
@@ -123,7 +129,6 @@ export class InMemoryReviewStore implements ReviewStore {
       repositoryId: input.repositoryId,
       pullRequestNumber: input.pullRequestNumber,
       commentId: null,
-      declinedAt: null,
     };
     this.reviews.set(key, record);
     return Promise.resolve({ ...record });
@@ -145,10 +150,12 @@ export class InMemoryReviewStore implements ReviewStore {
     return Promise.resolve();
   }
 
-  markDeclined(reviewId: string): Promise<void> {
-    const record = this.reviewById(reviewId);
-    if (record) record.declinedAt = new Date();
-    return Promise.resolve();
+  hasDeclinedRun(reviewId: string): Promise<boolean> {
+    return Promise.resolve(
+      this.runs.some(
+        (run) => run.reviewId === reviewId && run.status === "declined",
+      ),
+    );
   }
 
   startRun(input: {
@@ -159,9 +166,14 @@ export class InMemoryReviewStore implements ReviewStore {
       (run) => run.reviewId === input.reviewId && run.headSha === input.headSha,
     );
     if (existing) {
-      // A failed Run is retryable — see `PrismaReviewStore.startRun`.
-      if (existing.status !== "failed") return Promise.resolve(null);
+      // A failed Run is retryable, and so is one that only declined — see
+      // `PrismaReviewStore.startRun`.
+      if (existing.status !== "failed" && existing.status !== "declined") {
+        return Promise.resolve(null);
+      }
       existing.status = "running";
+      existing.outcomeReason = null;
+      existing.costUsd = null;
       existing.results = [];
       return Promise.resolve({ id: existing.id, headSha: existing.headSha });
     }
@@ -171,6 +183,8 @@ export class InMemoryReviewStore implements ReviewStore {
       reviewId: input.reviewId,
       headSha: input.headSha,
       status: "running",
+      outcomeReason: null,
+      costUsd: null,
       results: [],
     };
     this.runs.push(run);
@@ -181,6 +195,7 @@ export class InMemoryReviewStore implements ReviewStore {
     const run = this.runs.find((candidate) => candidate.id === input.runId);
     if (run) {
       run.status = "completed";
+      run.costUsd = input.costUsd;
       run.results = input.results.map((result) => ({
         criterionKey: result.criterionKey,
         verdict: result.verdict,
@@ -189,9 +204,35 @@ export class InMemoryReviewStore implements ReviewStore {
     return Promise.resolve();
   }
 
-  failRun(runId: string): Promise<void> {
-    const run = this.runs.find((candidate) => candidate.id === runId);
-    if (run) run.status = "failed";
+  declineRun(input: {
+    runId: string;
+    outcomeReason: "unlinked" | "no_provider_key";
+  }): Promise<void> {
+    const run = this.runs.find((candidate) => candidate.id === input.runId);
+    if (run) {
+      run.status = "declined";
+      run.outcomeReason = input.outcomeReason;
+    }
+    return Promise.resolve();
+  }
+
+  failRun(input: {
+    runId: string;
+    outcomeReason: ReviewOutcomeReason;
+    costUsd?: number;
+  }): Promise<void> {
+    const run = this.runs.find((candidate) => candidate.id === input.runId);
+    if (run) {
+      run.status = "failed";
+      run.outcomeReason = input.outcomeReason;
+      // Undefined means unknown, and stays distinct from a recorded zero.
+      run.costUsd = input.costUsd ?? null;
+    }
+    return Promise.resolve();
+  }
+
+  recordProviderAuthFailure(installationId: string): Promise<void> {
+    this.providerAuthFailures.add(installationId);
     return Promise.resolve();
   }
 

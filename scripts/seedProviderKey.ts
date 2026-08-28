@@ -90,7 +90,15 @@ async function main(): Promise<void> {
 
   await client.providerKey.upsert({
     where: { installationId: installation.id },
-    update: { ...encrypted, provider: "anthropic", validatedAt: new Date() },
+    update: {
+      ...encrypted,
+      provider: "anthropic",
+      validatedAt: new Date(),
+      // Same as the dashboard path: saving a key clears the record of one
+      // that was refused, or the break-glass route would leave a warning
+      // standing over a credential that has just been replaced.
+      lastAuthFailureAt: null,
+    },
     create: {
       ...encrypted,
       provider: "anthropic",

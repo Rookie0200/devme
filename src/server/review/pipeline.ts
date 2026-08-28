@@ -34,6 +34,11 @@ const CHECK_RUN_TITLE = "Spec adherence";
  * Every exit path either revises the Review's single comment or leaves it
  * untouched — none of them appends a second one, and none of them leaves a
  * half-written one behind.
+ *
+ * The same holds for the Run record: one is created before the first exit and
+ * every path transitions it, so a delivery that declines is as visible as one
+ * that reviews. A system that records only its successes cannot explain its
+ * silences.
  */
 export async function runReview(
   job: ReviewJob,
@@ -57,7 +62,27 @@ export async function runReview(
   const review = await store.ensureReview({
     repositoryId: repository.id,
     pullRequestNumber: job.pullRequestNumber,
+    title: job.pullRequestTitle,
   });
+
+  // Read *before* `startRun`, which supersedes a declined Run for this commit.
+  // Asked afterwards it would answer `false` for a Review that has plainly
+  // been declined, and a long-running Unlinked branch would have its declining
+  // comment re-rendered on every push.
+  const alreadyDeclined = await store.hasDeclinedRun(review.id);
+
+  // Every delivery that gets this far owns exactly one Run, created here
+  // rather than at each exit, so that an exit path transitions a row it
+  // already holds instead of owing one. A delivery for an Installation we
+  // have never seen returned above; it has no Review to attach a Run to.
+  const run = await store.startRun({
+    reviewId: review.id,
+    headSha: job.headSha,
+  });
+  // This head commit has already been evaluated. Returning here is what stops
+  // a GitHub redelivery charging the customer's Provider Key twice. A Run that
+  // only declined does not land here — it was never an evaluation.
+  if (!run) return;
 
   // The Review owns exactly one comment. Tracked locally so that two writes
   // within a single Run — the indexing notice and then the report — revise the
@@ -99,10 +124,10 @@ export async function runReview(
     // The *comment* is posted once, so a long-running branch is not nagged on
     // every push. The Check Run is per commit, so it is created every time —
     // otherwise a new push shows no check at all against its head.
-    if (review.declinedAt === null) {
+    if (!alreadyDeclined) {
       await upsertComment(renderDeclinedComment());
-      await store.markDeclined(review.id);
     }
+    await store.declineRun({ runId: run.id, outcomeReason: "unlinked" });
     await neutralCheckRun("No linked issue — no review performed.");
     return;
   }
@@ -111,18 +136,19 @@ export async function runReview(
   const model = await models.forInstallation(installation.id);
   if (!model) {
     await upsertComment(renderMissingProviderKeyComment());
+    await store.declineRun({
+      runId: run.id,
+      outcomeReason: "no_provider_key",
+    });
     await neutralCheckRun("No provider key configured — no review performed.");
     return;
   }
 
-  // --- Duplicate delivery -------------------------------------------------
-  const run = await store.startRun({
-    reviewId: review.id,
-    headSha: job.headSha,
-  });
-  // A Run for this head commit already exists. Returning here is what stops a
-  // GitHub redelivery charging the customer's Provider Key twice.
-  if (!run) return;
+  // What the Producer has already billed to the customer's Provider Key. Held
+  // out here so that a failure in the Verifier still records the spend rather
+  // than reporting it as unknown — the Installation whose key is failing is
+  // exactly the one being charged and then erroring, repeatedly.
+  let spent: number | undefined;
 
   try {
     // --- Lazy indexing ----------------------------------------------------
@@ -179,6 +205,7 @@ export async function runReview(
       diff,
       codebaseContext,
     });
+    spent = completion.costUsd;
 
     // The Verifier reads files itself rather than trusting the Producer's
     // quotes. Cached because it will ask for the same file repeatedly.
@@ -244,7 +271,20 @@ export async function runReview(
   } catch (error) {
     // Leave the comment as it stands. A transient model or API failure should
     // be recoverable by pushing again, not leave a half-written report.
-    await store.failRun(run.id);
+    //
+    // The provider classifies its own failure — the orchestrator does not know
+    // one vendor's error shapes and should not learn them. `costUsd` is
+    // omitted, not zeroed, when nothing was billed before the throw: unknown
+    // and nothing are different facts.
+    const outcomeReason = model.classifyFailure(error);
+    await store.failRun({ runId: run.id, outcomeReason, costUsd: spent });
+
+    // Only a refused credential is recorded against the key. A provider that
+    // was merely unreachable must never raise a warning telling the customer
+    // to replace something that was working.
+    if (outcomeReason === "provider_auth") {
+      await store.recordProviderAuthFailure(installation.id);
+    }
     throw error;
   }
 }

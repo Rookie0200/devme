@@ -171,7 +171,15 @@ export const installationRouter = createTRPCRouter({
 
       await ctx.client.providerKey.upsert({
         where: { installationId: input.installationId },
-        update: { ...encrypted, provider: "anthropic", validatedAt: new Date() },
+        update: {
+          ...encrypted,
+          provider: "anthropic",
+          validatedAt: new Date(),
+          // Acting on the warning is what clears it. A key that was refused
+          // during a real Review Run has just been replaced by one the
+          // provider accepted moments ago.
+          lastAuthFailureAt: null,
+        },
         create: {
           ...encrypted,
           provider: "anthropic",

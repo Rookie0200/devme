@@ -438,8 +438,8 @@ describe("states that are reported instead of reviewed", () => {
     const body = harness.github.soleCommentBody;
     expect(body).toContain("no model provider key configured");
     expect(criterionRows(body)).toHaveLength(0);
-    // No Review Run was recorded — the Check Run says so rather than
-    // reporting verdict counts.
+    // The Run is recorded as a decline rather than reported as verdicts, so
+    // the Check Run says why instead of counting criteria.
     expect(harness.github.checkRuns[0]!.summary).toContain("No provider key");
   });
 

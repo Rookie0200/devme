@@ -3,6 +3,7 @@ import type {
   InstallationRecord,
   PersistRunInput,
   RepositoryRecord,
+  ReviewOutcomeReason,
   ReviewRecord,
   ReviewRunRecord,
   ReviewStore,
@@ -120,6 +121,7 @@ export class PrismaReviewStore implements ReviewStore {
   async ensureReview(input: {
     repositoryId: string;
     pullRequestNumber: number;
+    title: string;
   }): Promise<ReviewRecord> {
     const record = await withDbRetry(() =>
       client.review.upsert({
@@ -129,10 +131,13 @@ export class PrismaReviewStore implements ReviewStore {
             pullRequestNumber: input.pullRequestNumber,
           },
         },
-        update: {},
+        // Refreshed on every delivery, so a pull request renamed after it was
+        // opened is recorded under the name it has now.
+        update: { title: input.title },
         create: {
           repositoryId: input.repositoryId,
           pullRequestNumber: input.pullRequestNumber,
+          title: input.title,
         },
       }),
     );
@@ -141,7 +146,6 @@ export class PrismaReviewStore implements ReviewStore {
       repositoryId: record.repositoryId,
       pullRequestNumber: record.pullRequestNumber,
       commentId: record.commentId === null ? null : Number(record.commentId),
-      declinedAt: record.declinedAt,
     };
   }
 
@@ -157,13 +161,14 @@ export class PrismaReviewStore implements ReviewStore {
     );
   }
 
-  async markDeclined(reviewId: string): Promise<void> {
-    await withDbRetry(() =>
-      client.review.update({
-        where: { id: reviewId },
-        data: { declinedAt: new Date() },
+  async hasDeclinedRun(reviewId: string): Promise<boolean> {
+    const declined = await withDbRetry(() =>
+      client.reviewRun.findFirst({
+        where: { reviewId, status: "declined" },
+        select: { id: true },
       }),
     );
+    return declined !== null;
   }
 
   async startRun(input: {
@@ -187,10 +192,23 @@ export class PrismaReviewStore implements ReviewStore {
       // make a transient model or API error permanent for that commit — the
       // BullMQ retry and any manual redelivery would both exit silently, and
       // only a fresh push could recover.
-      if (existing.status !== "failed") return null;
+      //
+      // Nor is a Run that only declined. A pull request declined as Unlinked
+      // is fixed by adding the link and reopening, which fires against this
+      // same head commit; blocking here would make it permanently unreviewable
+      // with no error raised anywhere.
+      if (existing.status !== "failed" && existing.status !== "declined") {
+        return null;
+      }
       await client.reviewRun.update({
         where: { id: existing.id },
-        data: { status: "running", startedAt: new Date(), completedAt: null },
+        data: {
+          status: "running",
+          outcomeReason: null,
+          costUsd: null,
+          startedAt: new Date(),
+          completedAt: null,
+        },
       });
       return { id: existing.id, headSha: input.headSha };
     }
@@ -248,11 +266,52 @@ export class PrismaReviewStore implements ReviewStore {
     );
   }
 
-  async failRun(runId: string): Promise<void> {
+  async declineRun(input: {
+    runId: string;
+    outcomeReason: "unlinked" | "no_provider_key";
+  }): Promise<void> {
     await withDbRetry(() =>
       client.reviewRun.update({
-        where: { id: runId },
-        data: { status: "failed", completedAt: new Date() },
+        where: { id: input.runId },
+        data: {
+          status: "declined",
+          outcomeReason: input.outcomeReason,
+          completedAt: new Date(),
+        },
+      }),
+    );
+  }
+
+  async failRun(input: {
+    runId: string;
+    outcomeReason: ReviewOutcomeReason;
+    costUsd?: number;
+  }): Promise<void> {
+    await withDbRetry(() =>
+      client.reviewRun.update({
+        where: { id: input.runId },
+        data: {
+          status: "failed",
+          outcomeReason: input.outcomeReason,
+          // Left null when nothing is known. A Run that failed before the
+          // first model call genuinely cost nothing; one that failed after the
+          // Producer billed did not, and recording either as `0` would make
+          // any total built on this column a lie.
+          costUsd: input.costUsd ?? null,
+          completedAt: new Date(),
+        },
+      }),
+    );
+  }
+
+  async recordProviderAuthFailure(installationId: string): Promise<void> {
+    // `updateMany` rather than `update`: an Installation without a Provider
+    // Key cannot reach a provider_auth failure, but a key removed between the
+    // failure and this write should be a no-op, not a crash.
+    await withDbRetry(() =>
+      client.providerKey.updateMany({
+        where: { installationId },
+        data: { lastAuthFailureAt: new Date() },
       }),
     );
   }
