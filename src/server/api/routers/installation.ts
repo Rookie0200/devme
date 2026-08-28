@@ -1,11 +1,14 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { Octokit } from "octokit";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
-import { client } from "@/server/db";
 import { env } from "@/env";
+import { reviewStore } from "@/server/review/deps";
 import { encryptProviderKey } from "@/server/review/crypto/providerKey";
 import { validateProviderKey } from "@/server/review/model/anthropic";
+import type {
+  GitHubIdentity,
+  ReachableInstallation,
+} from "@/server/api/githubIdentity";
 
 /**
  * Installations and their Provider Keys.
@@ -16,51 +19,43 @@ import { validateProviderKey } from "@/server/review/model/anthropic";
  * own OAuth token.
  */
 
+/** The shape `list` returns, and everything the dashboard is given. */
+const installationSelect = {
+  id: true,
+  githubInstallationId: true,
+  accountLogin: true,
+  accountType: true,
+  deletedAt: true,
+  providerKey: { select: { hint: true, validatedAt: true } },
+  _count: { select: { repositories: true } },
+} as const;
+
 /**
- * Installation-list lookups hit the GitHub API, so ADR-0001 requires caching
- * them. This is a process-local cache keyed by user with a short TTL — an
- * install or uninstall on GitHub takes up to `CACHE_TTL_MS` to show up, and a
- * multi-process deploy caches per process.
+ * Exactly the surface `assertReachable` touches.
+ *
+ * Deliberately not `PrismaClient`: the authorization check is the one thing
+ * here worth a test, and a test should be able to supply this without
+ * standing up a database or satisfying a thousand-method interface.
  */
-const reachableCache = new Map<
-  string,
-  { ids: Set<number>; expiresAt: number }
->();
-const CACHE_TTL_MS = 5 * 60 * 1000;
-
-/** The user's GitHub OAuth token. It grants dashboard identity, not repo access. */
-async function githubTokenFor(userId: string): Promise<string> {
-  const account = await client.account.findFirst({
-    where: { userId, provider: "github" },
-    select: { access_token: true },
-  });
-  if (!account?.access_token) {
-    throw new TRPCError({
-      code: "UNAUTHORIZED",
-      message: "Reconnect your GitHub account to continue.",
-    });
-  }
-  return account.access_token;
-}
-
-/** Ask GitHub which Installations this user can reach; never answer it ourselves. */
-async function reachableInstallationIds(userId: string): Promise<Set<number>> {
-  const cached = reachableCache.get(userId);
-  if (cached && cached.expiresAt > Date.now()) return cached.ids;
-
-  const octokit = new Octokit({ auth: await githubTokenFor(userId) });
-  const { data } = await octokit.request("GET /user/installations", {
-    per_page: 100,
-  });
-
-  const ids = new Set(data.installations.map((i) => i.id));
-  reachableCache.set(userId, { ids, expiresAt: Date.now() + CACHE_TTL_MS });
-  return ids;
+interface ReachabilityContext {
+  client: {
+    installation: {
+      findUnique(args: {
+        where: { id: string };
+        select: { githubInstallationId: true };
+      }): PromiseLike<{ githubInstallationId: bigint } | null>;
+    };
+  };
+  github: GitHubIdentity;
 }
 
 /** @throws if the signed-in user cannot reach this Installation on GitHub. */
-async function assertReachable(userId: string, installationId: string) {
-  const installation = await client.installation.findUnique({
+async function assertReachable(
+  ctx: ReachabilityContext,
+  userId: string,
+  installationId: string,
+): Promise<void> {
+  const installation = await ctx.client.installation.findUnique({
     where: { id: installationId },
     select: { githubInstallationId: true },
   });
@@ -68,48 +63,81 @@ async function assertReachable(userId: string, installationId: string) {
     throw new TRPCError({ code: "NOT_FOUND" });
   }
 
-  const reachable = await reachableInstallationIds(userId);
-  if (!reachable.has(Number(installation.githubInstallationId))) {
+  const reachable = await ctx.github.reachableInstallations(userId);
+  const found = reachable.some(
+    (candidate) =>
+      BigInt(candidate.githubInstallationId) ===
+      installation.githubInstallationId,
+  );
+  if (!found) {
     // Deliberately NOT_FOUND: whether an Installation exists is itself
-    // information this user is not entitled to.
+    // information this user is not entitled to. Do not "improve" this to
+    // FORBIDDEN — that answer confirms the Installation is real.
     throw new TRPCError({ code: "NOT_FOUND" });
   }
 }
 
 export const installationRouter = createTRPCRouter({
-  /** Only the Installations the signed-in user's GitHub account can reach. */
+  /**
+   * Only the Installations the signed-in user's GitHub account can reach.
+   *
+   * This query **writes**, which is unusual enough to say out loud. Rows are
+   * otherwise created by exactly one path — the `installation.created`
+   * webhook — and a delivery that GitHub drops is never retried, so an
+   * Installation whose event was missed would be invisible here forever. The
+   * `Installation` table is a cache of GitHub's state rather than a record of
+   * our own, so this reconciles the cache against the authority that owns it,
+   * using the account data GitHub returned in the very same response and the
+   * store method the webhook itself calls.
+   */
   list: protectedProcedure.query(async ({ ctx }) => {
-    const reachable = await reachableInstallationIds(ctx.user.id);
-    if (reachable.size === 0) return [];
+    const reachable = await ctx.github.reachableInstallations(ctx.user.id);
+    if (reachable.length === 0) return [];
 
-    const installations = await client.installation.findMany({
-      where: {
-        githubInstallationId: { in: [...reachable].map((id) => BigInt(id)) },
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        accountLogin: true,
-        accountType: true,
-        providerKey: { select: { hint: true, validatedAt: true } },
-        _count: { select: { repositories: true } },
-      },
+    const ids = reachable.map((i) => BigInt(i.githubInstallationId));
+    let rows = await ctx.client.installation.findMany({
+      where: { githubInstallationId: { in: ids } },
+      select: installationSelect,
+      orderBy: { accountLogin: "asc" },
     });
 
-    return installations.map((installation) => ({
-      id: installation.id,
-      accountLogin: installation.accountLogin,
-      accountType: installation.accountType,
-      repositoryCount: installation._count.repositories,
-      // Only ever the last four characters — the key itself never leaves the
-      // server, decrypted or otherwise.
-      providerKey: installation.providerKey
-        ? {
-            hint: installation.providerKey.hint,
-            validatedAt: installation.providerKey.validatedAt,
-          }
-        : null,
-    }));
+    // Missing entirely, or soft-deleted locally while GitHub still reports it
+    // reachable — a reinstall. `upsertInstallation` handles both: it creates,
+    // and on update it clears `deletedAt`, reviving the row with its Review
+    // history rather than orphaning it.
+    const known = new Map(
+      rows.map((row) => [String(row.githubInstallationId), row.deletedAt]),
+    );
+    const stale = reachable.filter((installation) => {
+      const key = String(installation.githubInstallationId);
+      return !known.has(key) || known.get(key) !== null;
+    });
+
+    if (stale.length > 0) {
+      await reconcile(stale);
+      rows = await ctx.client.installation.findMany({
+        where: { githubInstallationId: { in: ids } },
+        select: installationSelect,
+        orderBy: { accountLogin: "asc" },
+      });
+    }
+
+    return rows
+      .filter((row) => row.deletedAt === null)
+      .map((row) => ({
+        id: row.id,
+        accountLogin: row.accountLogin,
+        accountType: row.accountType,
+        repositoryCount: row._count.repositories,
+        // Only ever the last four characters — the key itself never leaves the
+        // server, decrypted or otherwise.
+        providerKey: row.providerKey
+          ? {
+              hint: row.providerKey.hint,
+              validatedAt: row.providerKey.validatedAt,
+            }
+          : null,
+      }));
   }),
 
   /**
@@ -124,7 +152,7 @@ export const installationRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await assertReachable(ctx.user.id, input.installationId);
+      await assertReachable(ctx, ctx.user.id, input.installationId);
 
       const checked = await validateProviderKey(input.apiKey).catch(() => {
         throw new TRPCError({
@@ -141,7 +169,7 @@ export const installationRouter = createTRPCRouter({
         env.ENCRYPTION_MASTER_KEY,
       );
 
-      await client.providerKey.upsert({
+      await ctx.client.providerKey.upsert({
         where: { installationId: input.installationId },
         update: { ...encrypted, provider: "anthropic", validatedAt: new Date() },
         create: {
@@ -159,10 +187,21 @@ export const installationRouter = createTRPCRouter({
   removeProviderKey: protectedProcedure
     .input(z.object({ installationId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      await assertReachable(ctx.user.id, input.installationId);
-      await client.providerKey.deleteMany({
+      await assertReachable(ctx, ctx.user.id, input.installationId);
+      await ctx.client.providerKey.deleteMany({
         where: { installationId: input.installationId },
       });
       return { removed: true };
     }),
 });
+
+/** Register Installations GitHub can see that we have no live row for. */
+async function reconcile(stale: ReachableInstallation[]): Promise<void> {
+  for (const installation of stale) {
+    await reviewStore.upsertInstallation({
+      githubInstallationId: installation.githubInstallationId,
+      accountLogin: installation.accountLogin,
+      accountType: installation.accountType,
+    });
+  }
+}
