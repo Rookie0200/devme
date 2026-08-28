@@ -38,8 +38,9 @@ The application's ongoing assessment of one pull request. A Review persists for 
 _Avoid_: Review comment, report
 
 **Review Run**:
-One evaluation of a Review against one specific head commit. A Review accumulates many Runs as the pull request is pushed to; comparing consecutive Runs is what lets the Review report progress.
+The record of one delivery's outcome against one specific head commit. A Review accumulates many Runs as the pull request is pushed to; comparing consecutive Runs is what lets the Review report progress. A Run may conclude without evaluating anything — an Unlinked pull request, or an Installation with no Provider Key, produces a Run that records the decline. See `docs/adr/0005`.
 _Avoid_: Review pass, execution, job
+_Avoid_: treating "Run" as a synonym for "evaluation" — a declined Run evaluated nothing, and that is the point of recording it.
 
 **Criterion Result**:
 The verdict a Review Run reaches on one Acceptance Criterion — satisfied, unsatisfied, or unclear — together with the evidence supporting it.

@@ -55,8 +55,10 @@ terms" section, which now lists things genuinely absent rather than merely depre
 GitHub and lets each one be given, replaced, or stripped of a Provider Key — nothing else. It shows
 a Repository *count* because `installation.list` already returns one; it deliberately shows no
 Repository list, no Review Run history, and no cost reporting, and adding any of those means a new
-router. Review Run history is the next piece of work, and the right home for surfacing a Provider Key
-that has started failing in production.
+router. Review Run history is the next piece of work — the pipeline now records the outcome of every
+delivery, so the data it needs already exists, including `ProviderKey.lastAuthFailureAt` for
+surfacing a key that has started failing in production. The spec is
+`.scratch/review-run-history/spec.md`.
 
 ### The review pipeline
 
@@ -73,8 +75,24 @@ Flow: GitHub webhook → signature verify → enqueue → worker → `runReview`
   `ReviewQueue`, `ReviewStore`, `CodebaseIndex`. Every one has a production implementation and a
   fake. This is what makes the single test seam viable; the queue interface in particular is
   **mandatory, not a nicety**.
-- **Orchestration**: `pipeline.ts` — unlinked decline → provider-key check → duplicate guard →
-  lazy indexing → criteria → Producer → Verifier → render → neutral Check Run.
+- **Orchestration**: `pipeline.ts` — start Run → unlinked decline → provider-key check → lazy
+  indexing → criteria → Producer → Verifier → render → neutral Check Run.
+- **Every delivery owns exactly one Review Run**, created before the first exit, and every exit path
+  transitions it — including the two declines. A decline *is* a Run (`docs/adr/0005`); a system that
+  records only its successes cannot explain its silences. Three consequences that are easy to undo
+  by accident:
+  - **`startRun` does not block on a `declined` or `failed` Run**, only on `running`/`completed`.
+    Adding a missing Issue link and reopening fires at the *same* head commit, so blocking there
+    makes the pull request permanently unreviewable with no error raised anywhere.
+  - **`hasDeclinedRun` must be read before `startRun`.** Starting a Run supersedes the declined row
+    that answers it, so asking afterwards re-renders the declining comment on every push.
+  - **The queue does no de-duplication.** It used to, keyed on the head commit, and that claimed a
+    commit for as long as BullMQ retained the completed job. The durable guard is the unique
+    constraint on `(reviewId, headSha)`; do not add a `jobId` back.
+- **A failed Run records why, and what it had already spent.** The reason is classified by the
+  `ModelProvider` — never by the pipeline, which must not learn one vendor's error shapes — and
+  anything unrecognised is `internal`. Do not guess `provider_auth`: it drives a dashboard warning
+  accusing the customer's credential. `costUsd` of `null` means unknown and is deliberately not `0`.
 - **Producers propose; they never publish.** `verifier/verify.ts` is the only path to a pull request.
   It re-checks each proposal against evidence it can independently locate, drops anything stylistic
   outright, and caps the report at ten items. Grounding is deliberately **asymmetric**: `unsatisfied`
@@ -88,6 +106,13 @@ markdown on the fake GitHub client, the Check Run conclusion, the HTTP status. D
 assert on prompt text, a Producer's intermediate proposal, internal call counts, or database rows.
 Model output is **scripted, never sampled**, so the suite verifies the pipeline and says nothing
 about whether the model's judgement is good.
+
+That rule means **the outcome columns are untested by construction** — `outcomeReason`, cost on a
+failed Run, `Review.title`, and `lastAuthFailureAt` are all rows, and rows are what the suite does
+not assert on. What *is* covered is the behaviour those changes can break from the outside: a
+declined commit still being reviewable after its Issue link is added, and an Unlinked branch not
+being nagged on every push. Both live at the webhook seam. The rest was verified against a real
+pull request; do not "fix" the gap by reaching into the fake store.
 
 There is exactly **one other seam**, and it is not part of the pipeline:
 `src/server/api/routers/installation.test.ts` drives `installationRouter` through a server-side
@@ -189,6 +214,13 @@ Background work runs through **BullMQ** against Redis (`REDIS_URL`), with `src/w
   `20260828150000_purge_legacy_product` (the row deletion has to run before the column identifying
   the rows is dropped). Both are applied. Prefer `prisma migrate deploy` over `migrate dev` against
   any database holding a Provider Key — `migrate dev` can decide the database needs resetting.
+- **Every generated migration tries to drop the HNSW index.** Prisma cannot see
+  `SourceCodeEmbedding_summaryEmbedding_hnsw_idx`, because the column it covers is `Unsupported`, so
+  it reads as stale and `migrate dev` emits a `DROP INDEX` for it. Applying that turns every Codebase
+  Index search into a sequential scan, silently. **Delete that line by hand and re-read the generated
+  SQL before committing it** — `20260828154110_review_run_outcomes` carries a note saying so.
+  Generate migrations against a throwaway local Postgres (`pgvector/pgvector` — the stock `postgres`
+  image lacks the extension) rather than the real database.
 - The review models require env vars that older `.env` files won't have: `GITHUB_APP_ID`,
   `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_OAUTH_CLIENT_ID`,
   `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_APP_SLUG`, `ENCRYPTION_MASTER_KEY`, `REDIS_URL`.
