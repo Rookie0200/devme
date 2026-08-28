@@ -1,70 +1,43 @@
-"use client";
+import { auth, signOut } from "@/auth";
 import { Button } from "@/components/ui/button";
-import useProject from "@/hooks/use-project";
-import { ExternalLink, Github } from "lucide-react";
-import Link from "next/link";
-import CommitLogs from "./commitLogs";
-import AskQuestionCard from "./askQuestionCard";
-import ArchiveButton from "@/components/archive-button";
-import InviteButton from "@/components/invite-button";
-import TeamMembers from "@/components/team-members";
 
-const dashboard = () => {
-  const { project, projects } = useProject();
-
-  // Show empty state for new users
-  if (!projects || projects.length === 0) {
-    return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
-        <h2 className="mb-4 text-2xl font-bold">Welcome to DevMe!</h2>
-        <p className="text-muted-foreground mb-6 max-w-md">
-          Get started by creating your first project. Connect your GitHub
-          repository to track commits and collaborate with your team.
-        </p>
-        <Button>Create Your First Project</Button>
-      </div>
-    );
-  }
+/**
+ * A deliberate placeholder, not a dashboard.
+ *
+ * The reviewer is driven entirely by GitHub webhooks, so there is nothing an
+ * Installation's owner needs to do here yet — but sign-in has to land somewhere
+ * that exists. The Installation and Provider Key surfaces are the next piece of
+ * work and get their own change; building a first version of them inside the
+ * purge would bury them in a commit nobody can read.
+ */
+export default async function DashboardPage() {
+  const session = await auth();
 
   return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-y-4">
-        {/* Github link div */}
-        <div className="bg-primary flex w-fit items-center justify-center rounded-md px-4 py-4">
-          <Github className="size-5 text-white" />
-          <div className="ml-2">
-            <Link
-              href={project?.githubUrl ?? ""}
-              className="inline-flex items-center gap-2 text-white"
-            >
-              The Github link of the Project is {project?.githubUrl}
-              <ExternalLink />
-            </Link>
-          </div>
-        </div>
-
-        <div className="h-2"></div>
-        {/* Features Button */}
-        <div className="flex items-center gap-2">
-          <TeamMembers />
-          <ArchiveButton />
-          <InviteButton />
-        </div>
-      </div>
-      <div className="mt-4">
-        <div className="mt-4 grid-cols-5 gap-4">
-          <AskQuestionCard />
-        </div>
-      </div>
-
-      <div className="mt-8"></div>
-
-      {/* Render commits */}
+    <div className="flex flex-col gap-4">
       <div>
-        <CommitLogs />
+        <h1 className="text-xl font-semibold">Signed in</h1>
+        <p className="text-muted-foreground text-sm">
+          {session?.user?.email ?? session?.user?.name ?? "Unknown account"}
+        </p>
       </div>
+
+      <p className="text-sm">
+        devme reviews pull requests against the issues they link. It runs from a
+        GitHub App installation and reports on the pull request itself, so there
+        is nothing to configure here — there is no dashboard yet.
+      </p>
+
+      <form
+        action={async () => {
+          "use server";
+          await signOut({ redirectTo: "/" });
+        }}
+      >
+        <Button type="submit" variant="outline" size="sm">
+          Sign out
+        </Button>
+      </form>
     </div>
   );
-};
-
-export default dashboard;
+}
