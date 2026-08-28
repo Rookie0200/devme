@@ -34,6 +34,7 @@ export interface DeliverPullRequestInput {
   action?: "opened" | "synchronize" | "reopened" | "closed";
   number?: number;
   headSha?: string;
+  title?: string;
   body?: string;
 }
 
@@ -88,6 +89,7 @@ export async function createHarness(options: HarnessOptions = {}) {
         },
         pull_request: {
           number: input.number ?? 1,
+          title: input.title ?? "Add rate limiting to the public API",
           body: input.body ?? "Closes #142",
           head: { sha: input.headSha ?? "a4f9c21aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
         },

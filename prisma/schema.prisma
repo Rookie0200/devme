@@ -147,9 +147,10 @@ model Review {
   /// The single comment this Review owns on the pull request.
   commentId BigInt?
 
-  /// Set when the Unlinked declining comment has been posted, so that later
-  /// pushes to the same pull request do not repeat it.
-  declinedAt DateTime?
+  /// The pull request's title, refreshed on every delivery so a renamed pull
+  /// request reads correctly. Null only on Reviews that predate this column —
+  /// the title was never in the payload we kept.
+  title String?
 
   repository Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
   runs       ReviewRun[]
@@ -157,16 +158,30 @@ model Review {
   @@unique([repositoryId, pullRequestNumber])
 }
 
-/// One evaluation of a Review against one specific head commit.
+/// The record of one delivery's outcome against one specific head commit. A
+/// Run may conclude without evaluating anything: an Unlinked pull request or
+/// an Installation with no Provider Key produces a Run recording the decline.
 model ReviewRun {
   id          String          @id @default(uuid())
   reviewId    String
   headSha     String
   status      ReviewRunStatus @default(running)
   model       String?
+  /// What this Run spent. Null means unknown — a Run that failed somewhere we
+  /// could not account for — and is deliberately distinct from `0`, which
+  /// means it ended before any model call.
   costUsd     Float?
   startedAt   DateTime        @default(now())
   completedAt DateTime?
+
+  /// Why the Run ended as it did: `unlinked`, `no_provider_key`,
+  /// `provider_auth`, `provider_unavailable`, `github_error`, `internal`.
+  /// Null on a completed Run and on rows predating outcome recording.
+  ///
+  /// A `String` narrowed by a TypeScript union rather than an enum: this set
+  /// is expected to grow, and each new value would otherwise be a migration
+  /// against production. Same reasoning as `Finding.producer`.
+  outcomeReason String?
 
   review   Review            @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   results  CriterionResult[]
@@ -228,6 +243,11 @@ model ProviderKey {
   /// Last four characters of the plaintext, for display only.
   hint           String
   validatedAt    DateTime?
+  /// When a real Review Run was refused by the provider on this credential.
+  /// Set by the pipeline, cleared when a key is saved, and destroyed with the
+  /// key — so the warning it drives cannot outlive what it is about. Only ever
+  /// set for a refused credential, never for a provider that was unreachable.
+  lastAuthFailureAt DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -238,6 +258,7 @@ enum ReviewRunStatus {
   running
   completed
   failed
+  declined
 }
 
 enum CriterionVerdict {

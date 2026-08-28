@@ -1,6 +1,10 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { generateText } from "ai";
-import type { ModelCompletion, ModelProvider } from "../ports";
+import type {
+  ModelCompletion,
+  ModelProvider,
+  ReviewOutcomeReason,
+} from "../ports";
 
 /**
  * The Anthropic-backed Producer/Verifier model.
@@ -82,6 +86,10 @@ export class AnthropicModelProvider implements ModelProvider {
       ),
     };
   }
+
+  classifyFailure(error: unknown): ReviewOutcomeReason {
+    return classifyAnthropicFailure(error);
+  }
 }
 
 /**
@@ -154,4 +162,35 @@ function rejectionReason(error: unknown): string | null {
   }
 
   return null;
+}
+
+function statusOf(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const { statusCode } = error as { statusCode?: unknown };
+  return typeof statusCode === "number" ? statusCode : null;
+}
+
+/**
+ * How a failure raised while spending this Provider Key should be recorded.
+ *
+ * Reuses `rejectionReason` so the is-this-the-credential judgement is made in
+ * exactly one place — including the identity-linked-key case, which nobody
+ * rediscovers by reasoning about it.
+ *
+ * Everything not clearly the provider's is `internal`. A Verifier bug, a
+ * GitHub timeout, and a genuine outage all reach the pipeline's catch
+ * together, and guessing between them would put a warning on a customer's
+ * dashboard accusing a credential that is fine.
+ */
+export function classifyAnthropicFailure(error: unknown): ReviewOutcomeReason {
+  if (rejectionReason(error) !== null) return "provider_auth";
+
+  // Only where the error identifies itself: rate limiting, overload, and the
+  // 5xx range are the provider saying it could not serve the request.
+  const status = statusOf(error);
+  if (status !== null && (status === 429 || status >= 500)) {
+    return "provider_unavailable";
+  }
+
+  return "internal";
 }

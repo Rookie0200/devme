@@ -2,7 +2,6 @@ import { Queue, Worker } from "bullmq";
 import IORedis from "ioredis";
 import { env } from "@/env";
 import type { ReviewJob, ReviewQueue } from "../ports";
-import { reviewJobKey } from "./jobKey";
 
 export const REVIEW_QUEUE_NAME = "review";
 
@@ -26,9 +25,19 @@ export class BullMqReviewQueue implements ReviewQueue {
   });
 
   async enqueue(job: ReviewJob): Promise<void> {
-    // A job id BullMQ already holds — queued, active, or recently completed —
-    // is rejected, which is the duplicate-delivery guard on the queue side.
-    await this.queue.add("review", job, { jobId: reviewJobKey(job) });
+    // No `jobId`, and so no de-duplication here. Keying on the head commit
+    // seemed like a free second guard against charging a Provider Key twice,
+    // but it claimed a commit for as long as BullMQ retained the completed
+    // job — and it is too coarse to tell a redelivery from a genuinely new
+    // attempt at the same commit. A pull request declined as Unlinked and
+    // then reopened with its link added fires at the *same* head commit, and
+    // was silently dropped here before ever reaching the pipeline.
+    //
+    // The durable guard is the unique constraint on (reviewId, headSha) in
+    // `PrismaReviewStore.startRun`: it is transactional, it is not bounded by
+    // a retention window, and it can distinguish a Run that was completed
+    // from one that only declined.
+    await this.queue.add("review", job);
   }
 }
 

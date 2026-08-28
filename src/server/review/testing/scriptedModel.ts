@@ -2,6 +2,7 @@ import type {
   ModelCompletion,
   ModelProvider,
   ModelProviderFactory,
+  ReviewOutcomeReason,
 } from "../ports";
 
 type Purpose = "extract-criteria" | "produce";
@@ -49,6 +50,17 @@ export class ScriptedModelProvider implements ModelProvider {
       costUsd: 0.01,
     });
   }
+
+  /**
+   * Whatever a test wants a raised failure recorded as. `internal` by default,
+   * matching a real provider's answer for anything it does not recognise as
+   * its own.
+   */
+  classifyFailure(): ReviewOutcomeReason {
+    return this.failureReason;
+  }
+
+  failureReason: ReviewOutcomeReason = "internal";
 }
 
 /** Hands the same scripted provider to every Installation. */

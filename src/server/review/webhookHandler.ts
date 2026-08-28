@@ -35,6 +35,7 @@ const pullRequestEvent = z.object({
   }),
   pull_request: z.object({
     number: z.number(),
+    title: z.string().default(""),
     body: z.string().nullable(),
     head: z.object({ sha: z.string() }),
   }),
@@ -88,6 +89,7 @@ export async function handleGithubWebhook(
       owner: repository.owner.login,
       repo: repository.name,
       pullRequestNumber: pull_request.number,
+      pullRequestTitle: pull_request.title,
       headSha: pull_request.head.sha,
       pullRequestBody: pull_request.body ?? "",
     });
