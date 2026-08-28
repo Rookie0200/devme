@@ -5,7 +5,6 @@ import { ExternalLink, Github } from "lucide-react";
 import Link from "next/link";
 import CommitLogs from "./commitLogs";
 import AskQuestionCard from "./askQuestionCard";
-import MeetingCard from "./meetingCard";
 import ArchiveButton from "@/components/archive-button";
 import InviteButton from "@/components/invite-button";
 import TeamMembers from "@/components/team-members";
@@ -55,8 +54,6 @@ const dashboard = () => {
       <div className="mt-4">
         <div className="mt-4 grid-cols-5 gap-4">
           <AskQuestionCard />
-          {/* <Button variant={"outline"}>Create Meeting</Button> */}
-          <MeetingCard />
         </div>
       </div>
 

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { SidebarGroupLabel, Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarMenu, SidebarMenuItem, SidebarMenuButton, useSidebar } from "@/components/ui/sidebar";
 import useProject from "@/hooks/use-project";
 import { cn } from "@/lib/utils";
-import { Bot, CreditCard, LayoutDashboard, Plus, Presentation, LogOut } from "lucide-react";
+import { Bot, CreditCard, LayoutDashboard, Plus, LogOut } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
@@ -24,11 +24,6 @@ export function AppSideBar() {
       title: "Q&A",
       url: "/dashboard/qa",
       icon: Bot,
-    },
-    {
-      title: "Meetings",
-      url: "/dashboard/meetings",
-      icon: Presentation,
     },
     {
       title: "Billing",
