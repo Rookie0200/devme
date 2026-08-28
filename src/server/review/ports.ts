@@ -169,6 +169,33 @@ export interface ReviewJob {
 }
 
 /**
+ * What the queue knows about *this delivery* of a job, as distinct from what
+ * the job itself says.
+ *
+ * Deliberately not a field on `ReviewJob`. The payload is constructed by the
+ * webhook handler, which knows nothing about retries, so an optional field
+ * there would be absent on exactly the path that needs it — and absent reads
+ * as `false`.
+ */
+export interface ReviewDelivery {
+  /**
+   * A previous attempt at this job was handed out and did not finish.
+   *
+   * Set from the queue's own re-delivery accounting and never inferred by the
+   * pipeline, for the same reason failure classification belongs to the
+   * `ModelProvider`: the orchestrator must not learn one vendor's semantics.
+   * What the pipeline gets is the conclusion, not the counter.
+   */
+  previousAttemptAbandoned: boolean;
+}
+
+/** What a queue hands to the pipeline for each delivery. */
+export type ReviewJobHandler = (
+  job: ReviewJob,
+  delivery: ReviewDelivery,
+) => Promise<void>;
+
+/**
  * Narrow on purpose. The BullMQ implementation is used in production; the
  * inline one runs the job synchronously on enqueue and is what makes the
  * single webhook-level test seam viable.
@@ -327,10 +354,23 @@ export interface ReviewStore {
    * That is what lets a pull request declined as Unlinked be reviewed once
    * its Issue link is added, which fires at the same head commit because
    * editing a body is not a subscribed action.
+   *
+   * Nor does a Run whose worker died holding it. Such a Run is left at
+   * `running` with nothing to move it, so blocking on it would make the
+   * commit permanently unreviewable — see the implementation for the two
+   * signals that establish abandonment.
+   *
+   * This is the *only* gate on starting a Run. There is deliberately no
+   * separate `abandonRun`: a second writer of Run status opens a window
+   * between the two calls for a concurrent delivery to interleave, which is
+   * precisely the race the unique constraint on `(reviewId, headSha)` exists
+   * to settle.
    */
   startRun(input: {
     reviewId: string;
     headSha: string;
+    /** From `ReviewDelivery`, not from the job payload. */
+    previousAttemptAbandoned: boolean;
   }): Promise<ReviewRunRecord | null>;
 
   completeRun(input: PersistRunInput): Promise<void>;

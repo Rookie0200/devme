@@ -2,6 +2,7 @@ import type {
   CodebaseIndex,
   GitHubClient,
   ModelProviderFactory,
+  ReviewDelivery,
   ReviewJob,
   ReviewStore,
 } from "./ports";
@@ -43,6 +44,7 @@ const CHECK_RUN_TITLE = "Spec adherence";
 export async function runReview(
   job: ReviewJob,
   deps: PipelineDeps,
+  delivery: ReviewDelivery,
 ): Promise<void> {
   const { store, models, index } = deps;
 
@@ -78,10 +80,14 @@ export async function runReview(
   const run = await store.startRun({
     reviewId: review.id,
     headSha: job.headSha,
+    // Passed straight through. The pipeline does not interpret it and does not
+    // know what the queue counted to reach it.
+    previousAttemptAbandoned: delivery.previousAttemptAbandoned,
   });
   // This head commit has already been evaluated. Returning here is what stops
-  // a GitHub redelivery charging the customer's Provider Key twice. A Run that
-  // only declined does not land here — it was never an evaluation.
+  // a GitHub redelivery charging the customer's Provider Key twice. Neither a
+  // Run that only declined nor one abandoned by a dead worker lands here —
+  // the first was never an evaluation, and the second never finished one.
   if (!run) return;
 
   // The Review owns exactly one comment. Tracked locally so that two writes

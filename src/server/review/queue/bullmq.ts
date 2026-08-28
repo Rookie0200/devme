@@ -1,7 +1,7 @@
 import { Queue, Worker } from "bullmq";
 import IORedis from "ioredis";
 import { env } from "@/env";
-import type { ReviewJob, ReviewQueue } from "../ports";
+import type { ReviewJob, ReviewJobHandler, ReviewQueue } from "../ports";
 
 export const REVIEW_QUEUE_NAME = "review";
 
@@ -42,11 +42,23 @@ export class BullMqReviewQueue implements ReviewQueue {
 }
 
 /** Started by the worker process, not by the Next.js server. */
-export function startReviewWorker(handler: (job: ReviewJob) => Promise<void>) {
+export function startReviewWorker(handler: ReviewJobHandler) {
   return new Worker<ReviewJob>(
     REVIEW_QUEUE_NAME,
     async (job) => {
-      await handler(job.data);
+      // `attemptsStarted` counts how many times this job has been handed to a
+      // worker, this delivery included, so anything above one means a previous
+      // attempt was handed out and never finished.
+      //
+      // Not `attemptsMade`, which counts only attempts that *failed loudly*.
+      // A worker killed mid-job never reaches the failure path: BullMQ's
+      // stalled-job recovery increments the stalled counter and re-queues,
+      // leaving `attemptsMade` at zero. That is the exact case this signal
+      // exists for, so reading it would have missed every one of them and
+      // caught only the retries that were never stuck.
+      await handler(job.data, {
+        previousAttemptAbandoned: job.attemptsStarted > 1,
+      });
     },
     { connection: connection(), concurrency: 2 },
   );

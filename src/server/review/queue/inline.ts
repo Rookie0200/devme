@@ -1,4 +1,16 @@
-import type { ReviewJob, ReviewQueue } from "../ports";
+import type { ReviewJob, ReviewJobHandler, ReviewQueue } from "../ports";
+
+export interface InlineReviewQueueOptions {
+  /**
+   * Report every delivery as a re-attempt.
+   *
+   * Exists solely so the seam test can reach the evidence-based takeover path,
+   * which is the one that fires in production. Without it the suite could only
+   * ever exercise the elapsed-time fallback, leaving the primary rule verified
+   * by hand alone.
+   */
+  previousAttemptAbandoned?: boolean;
+}
 
 /**
  * Runs each job synchronously on enqueue.
@@ -13,9 +25,17 @@ import type { ReviewJob, ReviewQueue } from "../ports";
  * `PrismaReviewStore.startRun`.
  */
 export class InlineReviewQueue implements ReviewQueue {
-  constructor(private readonly handler: (job: ReviewJob) => Promise<void>) {}
+  constructor(
+    private readonly handler: ReviewJobHandler,
+    private readonly options: InlineReviewQueueOptions = {},
+  ) {}
 
   async enqueue(job: ReviewJob): Promise<void> {
-    await this.handler(job);
+    // A first attempt unless a test says otherwise, which is what running
+    // synchronously on enqueue genuinely means: nothing has been handed out
+    // and dropped before this.
+    await this.handler(job, {
+      previousAttemptAbandoned: this.options.previousAttemptAbandoned ?? false,
+    });
   }
 }
