@@ -23,9 +23,10 @@ bun run db:studio      # prisma studio
 ```
 
 Tests are `bun test`, no extra dependency. The review suite lives at
-`src/server/review/review.test.ts` and enters at **one seam**: the GitHub webhook handler. A second,
-much narrower seam at `src/server/api/routers/installation.test.ts` pins one authorization property
-and nothing else. See "The review pipeline" below before adding to either.
+`src/server/review/review.test.ts` and enters at **one seam**: the GitHub webhook handler. Separately,
+`routers/installation.test.ts` and `routers/reviewRun.test.ts` are *router authorization tests* —
+each pins exactly one security property and nothing else. See "The review pipeline" below before
+adding to any of them.
 
 `bun run check` sets `SKIP_ENV_VALIDATION=1` for both lint and the tests, so the gate needs no
 secrets — the router tests import `@/env` transitively and would otherwise fail on any `.env`
@@ -51,14 +52,25 @@ meeting transcription, and the cancelled roles workstream were removed in `docs/
 exist only in git history. Vocabulary is defined in `CONTEXT.md`; use it, and note its "Retired
 terms" section, which now lists things genuinely absent rather than merely deprecated.
 
-**The interface is one screen.** `/dashboard` lists the Installations the signed-in user can reach on
-GitHub and lets each one be given, replaced, or stripped of a Provider Key — nothing else. It shows
-a Repository *count* because `installation.list` already returns one; it deliberately shows no
-Repository list, no Review Run history, and no cost reporting, and adding any of those means a new
-router. Review Run history is the next piece of work — the pipeline now records the outcome of every
-delivery, so the data it needs already exists, including `ProviderKey.lastAuthFailureAt` for
-surfacing a key that has started failing in production. The spec is
-`.scratch/review-run-history/spec.md`.
+**The interface is two screens, and the line between them is `docs/adr/0006`.**
+
+- `/dashboard` lists the Installations the signed-in user can reach on GitHub and lets each be given,
+  replaced, or stripped of a Provider Key. It shows a Repository *count* because `installation.list`
+  already returns one, and warns when a key has been **refused** by the provider during a real Review
+  Run, read from `ProviderKey.lastAuthFailureAt`. It still shows no Repository list.
+- `/dashboard/runs` is the Review Run feed: the 50 most recent Runs across every reachable
+  Installation, newest first, one row per Run, capped rather than paginated and saying so.
+
+**GitHub owns "what the review said"; the dashboard owns "whether it ran, and why it didn't."** The
+pull request comment is the only rendering of verdicts, Criterion Results, Findings, and Evidence.
+The dashboard shows none of them and has no run detail view — that is ADR-0006, not an unfinished
+edge, and it is the standing answer to "why doesn't the dashboard show review results?" The test for
+a new dashboard feature is whether it answers *did the reviewer run* rather than *what did it
+conclude*.
+
+Still deliberately absent, each needing a new query or router: pagination, filtering (the
+per-Installation filter should arrive as a query param on `/dashboard/runs`, not a control), cost
+totals of any kind, and a cross-Installation operator view.
 
 ### The review pipeline
 
@@ -114,23 +126,32 @@ declined commit still being reviewable after its Issue link is added, and an Unl
 being nagged on every push. Both live at the webhook seam. The rest was verified against a real
 pull request; do not "fix" the gap by reaching into the fake store.
 
-There is exactly **one other seam**, and it is not part of the pipeline:
-`src/server/api/routers/installation.test.ts` drives `installationRouter` through a server-side
-caller. It exists for a single property — an Installation the signed-in user cannot reach on GitHub
-answers `NOT_FOUND` and never `FORBIDDEN`, because `FORBIDDEN` confirms to a stranger that the
-Installation is real. That check is load-bearing, subtle enough to look like a mistake, and fails
-silently when lost.
+Outside the pipeline there is a second **category** of test — *router authorization tests* — and it
+is deliberately not a general router suite. Each file drives one router through a server-side caller
+with a stub `ctx.client` and a fake `ctx.github`, and pins **one property**, chosen because it is a
+security property that fails *silently* and in a direction that looks like an improvement:
 
-Be clear about what that seam does **not** prove. It runs against a hand-written stub for
-`ctx.client`, so it says nothing about whether the real Prisma queries are correct — the same blind
-spot recorded below for `PrismaReviewStore`. It exercises no part of the dashboard: there is no
-component test, no browser automation, and nothing asserting that a key is masked or that removal
-takes two clicks. Do not grow it into a general router suite; the happy paths are verified by hand
-against a real Installation.
+- `installation.test.ts` — an Installation the signed-in user cannot reach answers `NOT_FOUND`, never
+  `FORBIDDEN`, because `FORBIDDEN` confirms to a stranger that the Installation is real.
+- `reviewRun.test.ts` — a Review Run from an unreachable Installation is **absent from a non-empty
+  result**. Assert absence, not a thrown error: dropping the filter does not throw, it returns extra
+  rows, so an error-shaped assertion sails straight past the regression. In development it is
+  invisible, because a developer can usually reach every Installation in their own database.
+
+Adding a third means finding another property of that kind, not testing a happy path. Happy paths are
+verified by hand against a real Installation.
+
+Be clear about what these seams do **not** prove. They run against hand-written stubs for
+`ctx.client`, so they say nothing about whether the real Prisma queries are correct — the same blind
+spot recorded below for `PrismaReviewStore`. They exercise no part of either screen: there is no
+component test, no browser automation, and nothing asserting that a key is masked, that removal takes
+two clicks, that the feed's cap is stated, or that an unknown cost renders as unknown rather than
+zero. All of that is verified by hand.
 
 ### The tRPC surface
 
-`src/server/api/root.ts` mounts one router: `src/server/api/routers/installation.ts`, at `/api/trpc`.
+`src/server/api/root.ts` mounts two routers at `/api/trpc`: `routers/installation.ts` and
+`routers/reviewRun.ts`.
 Everything is `protectedProcedure` — the `isAuthenticated` middleware in `src/server/api/trpc.ts`
 narrows `ctx.session` and adds `ctx.user`. `publicProcedure` carries a dev-only artificial delay;
 `protectedProcedure` does not. Add new routers to `root.ts` manually.
