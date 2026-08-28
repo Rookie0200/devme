@@ -14,6 +14,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       clientId: process.env.GITHUB_OAUTH_CLIENT_ID!,
       clientSecret: process.env.GITHUB_OAUTH_CLIENT_SECRET!,
       authorization: { params: { scope: "read:user user:email read:org" } },
+      // GitHub added the RFC 9207 `iss` parameter to its callback without
+      // publishing OIDC discovery. @auth/core has no issuer configured for
+      // this provider by default, so it falls back to a placeholder that
+      // never matches, and oauth4webapi rejects every callback. Setting the
+      // real issuer here is the documented workaround.
+      issuer: "https://github.com/login/oauth",
     }),
   ],
   callbacks: {
