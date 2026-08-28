@@ -13,11 +13,11 @@ export const env = createEnv({
       .default("development"),
     NEXTAUTH_SECRET: z.string().min(1),
     NEXTAUTH_URL: z.string().url().optional(),
-    GITHUB_TOKEN_AUTH: z.string().optional(),
+    // Indexing is funded by the platform, not by an Installation's Provider
+    // Key, so these are the application's own credentials.
     GROQ_API_KEY: z.string().min(1),
     GROQ_CHAT_MODEL: z.string().optional(),
     HF_TOKEN: z.string().optional(),
-    ASSEMBLYAI_API_KEY: z.string().min(1),
 
     // The GitHub App identity that posts reviews. Repository access comes from
     // an installation token minted per Installation — never a stored PAT.
@@ -62,11 +62,9 @@ export const env = createEnv({
     NODE_ENV: process.env.NODE_ENV,
     NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
     NEXTAUTH_URL: process.env.NEXTAUTH_URL,
-    GITHUB_TOKEN_AUTH: process.env.GITHUB_TOKEN_AUTH,
     GROQ_API_KEY: process.env.GROQ_API_KEY,
     GROQ_CHAT_MODEL: process.env.GROQ_CHAT_MODEL,
     HF_TOKEN: process.env.HF_TOKEN,
-    ASSEMBLYAI_API_KEY: process.env.ASSEMBLYAI_API_KEY,
     GITHUB_APP_ID: process.env.GITHUB_APP_ID,
     GITHUB_APP_PRIVATE_KEY: process.env.GITHUB_APP_PRIVATE_KEY,
     GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET,

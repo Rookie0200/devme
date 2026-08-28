@@ -71,7 +71,8 @@ _Avoid_: Embeddings, vector store, knowledge base
 
 ## Retired terms
 
-These appear in git history and older documents. They no longer describe anything in the system.
+These appear in git history and older documents. They no longer describe anything in the system —
+the code and the schema were removed in `docs/adr/0004`, so these are absent rather than deprecated.
 
 - **Project** — replaced by Repository. Repositories now arrive from an Installation instead of being created by hand.
 - **Member / Role** — access is decided by GitHub's own permissions on the Installation. This application stores no membership or roles of its own.
