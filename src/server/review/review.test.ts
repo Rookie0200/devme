@@ -20,6 +20,7 @@ import {
   RETRY_AFTER_CITATION,
 } from "./testing/fixtures";
 import type { FakeGitHubClient } from "./testing/fakeGitHub";
+import { RUN_ABANDONED_AFTER_MS } from "./runLifecycle";
 
 /**
  * Every test here enters at the webhook and asserts on what left the system:
@@ -493,6 +494,88 @@ describe("states that are reported instead of reviewed", () => {
     // Indexing is attempted again rather than skipped for good. A repository
     // marked indexed on a failed build would search an empty index forever.
     expect(harness.index.indexedRepositories).toHaveLength(2);
+  });
+});
+
+describe("a review run abandoned by a dead worker", () => {
+  /**
+   * A worker killed mid-review leaves its Run at `running` and nothing moves
+   * it. Every later delivery at that head commit — the queue's own retry, a
+   * redelivery from the GitHub App settings, a reopen — used to be discarded
+   * by the start guard, so the pull request became permanently unreviewable
+   * with no error raised anywhere. Only a fresh commit escaped, and that
+   * sidesteps the stuck Run rather than clearing it.
+   *
+   * The `running` Run is seeded rather than produced through the seam, because
+   * the seam cannot produce it: the pipeline's catch block always runs and
+   * writes `failed`. Seeding is arrange — every assertion below is still on
+   * what left the system.
+   */
+  const REVIEWED = {
+    "extract-criteria": [extractScript(CRITERIA_142)],
+    produce: [BOTH_SATISFIED],
+  };
+
+  test("is taken over once it is old enough to be presumed dead", async () => {
+    const harness = await createHarness({ scripts: REVIEWED });
+    seedRepository(harness.github);
+
+    const sha = "a".repeat(40);
+    await harness.seedRunningRun({
+      headSha: sha,
+      startedAt: new Date(Date.now() - RUN_ABANDONED_AFTER_MS - 1_000),
+    });
+
+    await harness.deliverPullRequest({ action: "reopened", headSha: sha });
+
+    const body = harness.github.soleCommentBody;
+    expect(body).toContain("**Reviewing against #142**");
+    expect(criterionRows(body)).toHaveLength(2);
+  });
+
+  test("is taken over immediately when the queue says the attempt was lost", async () => {
+    const harness = await createHarness({
+      scripts: REVIEWED,
+      previousAttemptAbandoned: true,
+    });
+    seedRepository(harness.github);
+
+    // Seconds old, not thirty minutes: this is the path that actually fires in
+    // production, where a stalled job is re-delivered about a minute after the
+    // worker holding it died. Waiting out the threshold would discard it.
+    const sha = "a".repeat(40);
+    await harness.seedRunningRun({ headSha: sha });
+
+    await harness.deliverPullRequest({
+      action: "synchronize",
+      headSha: sha,
+    });
+
+    const body = harness.github.soleCommentBody;
+    expect(body).toContain("**Reviewing against #142**");
+    expect(criterionRows(body)).toHaveLength(2);
+  });
+
+  /**
+   * The negative control, and the reason the two tests above cannot be passed
+   * by simply deleting the guard. A Run that is genuinely still in progress
+   * must not be taken over: doing so charges the Provider Key twice and races
+   * two workers over one comment.
+   */
+  test("a run that is still live is left alone by a first delivery", async () => {
+    const harness = await createHarness({ scripts: REVIEWED });
+    seedRepository(harness.github);
+
+    const sha = "a".repeat(40);
+    await harness.seedRunningRun({ headSha: sha });
+
+    await harness.deliverPullRequest({ action: "synchronize", headSha: sha });
+
+    // Nothing left the system at all. Had the delivery been let through it
+    // would have posted the report, and the Check Run with it.
+    expect(harness.github.created).toHaveLength(0);
+    expect(harness.github.edits).toHaveLength(0);
+    expect(harness.github.checkRuns).toHaveLength(0);
   });
 });
 

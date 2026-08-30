@@ -28,6 +28,11 @@ export interface HarnessOptions {
   hasProviderKey?: boolean;
   /** `true` skips seeding, leaving the Repository unindexed. */
   unindexed?: boolean;
+  /**
+   * `true` makes every delivery report itself as a re-attempt, standing in for
+   * a queue re-delivering a job whose previous attempt never finished.
+   */
+  previousAttemptAbandoned?: boolean;
 }
 
 export interface DeliverPullRequestInput {
@@ -50,15 +55,21 @@ export async function createHarness(options: HarnessOptions = {}) {
     accountType: "Organization",
   });
 
-  const queue = new InlineReviewQueue((job) =>
-    runReview(job, {
-      store,
-      githubFor: () => Promise.resolve(github),
-      models: new ScriptedModelFactory(
-        options.hasProviderKey === false ? null : model,
+  const queue = new InlineReviewQueue(
+    (job, delivery) =>
+      runReview(
+        job,
+        {
+          store,
+          githubFor: () => Promise.resolve(github),
+          models: new ScriptedModelFactory(
+            options.hasProviderKey === false ? null : model,
+          ),
+          index,
+        },
+        delivery,
       ),
-      index,
-    }),
+    { previousAttemptAbandoned: options.previousAttemptAbandoned },
   );
 
   async function deliver(event: string, payload: unknown, opts?: { signature?: string }) {
@@ -108,9 +119,46 @@ export async function createHarness(options: HarnessOptions = {}) {
     await store.markIndexed(repository.id);
   }
 
+  /**
+   * Leaves a Review Run at `running` for this head commit, as a worker killed
+   * mid-review leaves one.
+   *
+   * `startedAt` defaults to now, which is the *live* case — a Run that a
+   * delivery arriving seconds later must not disturb. Pass an older date to
+   * stage one that has been sitting long enough to be presumed dead.
+   */
+  async function seedRunningRun(
+    input: { headSha?: string; number?: number; startedAt?: Date } = {},
+  ) {
+    const repository = await store.upsertRepository({
+      githubRepoId: REPO_ID,
+      owner: OWNER,
+      name: REPO,
+      installationId: (await store.findInstallation(INSTALLATION_ID))!.id,
+    });
+    const review = await store.ensureReview({
+      repositoryId: repository.id,
+      pullRequestNumber: input.number ?? 1,
+      title: "Add rate limiting to the public API",
+    });
+    return store.seedRunningRun({
+      reviewId: review.id,
+      headSha: input.headSha ?? "a4f9c21aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      startedAt: input.startedAt,
+    });
+  }
+
   if (!options.unindexed) await seedIndexed();
 
-  return { store, github, index, model, deliver, deliverPullRequest };
+  return {
+    store,
+    github,
+    index,
+    model,
+    deliver,
+    deliverPullRequest,
+    seedRunningRun,
+  };
 }
 
 /** Rows of the rendered criteria table, one per reported Acceptance Criterion. */

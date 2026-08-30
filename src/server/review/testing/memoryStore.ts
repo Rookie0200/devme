@@ -10,6 +10,7 @@ import type {
   StoredCriterionResult,
 } from "../ports";
 import type { Criterion } from "../types";
+import { isRunAbandoned } from "../runLifecycle";
 
 interface StoredRun {
   id: string;
@@ -18,6 +19,7 @@ interface StoredRun {
   status: "running" | "completed" | "failed" | "declined";
   outcomeReason: ReviewOutcomeReason | null;
   costUsd: number | null;
+  startedAt: Date;
   results: StoredCriterionResult[];
 }
 
@@ -161,19 +163,26 @@ export class InMemoryReviewStore implements ReviewStore {
   startRun(input: {
     reviewId: string;
     headSha: string;
+    previousAttemptAbandoned: boolean;
   }): Promise<ReviewRunRecord | null> {
     const existing = this.runs.find(
       (run) => run.reviewId === input.reviewId && run.headSha === input.headSha,
     );
     if (existing) {
-      // A failed Run is retryable, and so is one that only declined — see
-      // `PrismaReviewStore.startRun`.
-      if (existing.status !== "failed" && existing.status !== "declined") {
-        return Promise.resolve(null);
-      }
+      // A failed Run is retryable, so is one that only declined, and so is one
+      // abandoned by a dead worker — see `PrismaReviewStore.startRun`, which
+      // carries the reasoning for all three.
+      const mayTakeOver =
+        existing.status === "failed" ||
+        existing.status === "declined" ||
+        (existing.status === "running" &&
+          (input.previousAttemptAbandoned ||
+            isRunAbandoned(existing.startedAt)));
+      if (!mayTakeOver) return Promise.resolve(null);
       existing.status = "running";
       existing.outcomeReason = null;
       existing.costUsd = null;
+      existing.startedAt = new Date();
       existing.results = [];
       return Promise.resolve({ id: existing.id, headSha: existing.headSha });
     }
@@ -185,10 +194,39 @@ export class InMemoryReviewStore implements ReviewStore {
       status: "running",
       outcomeReason: null,
       costUsd: null,
+      startedAt: new Date(),
       results: [],
     };
     this.runs.push(run);
     return Promise.resolve({ id: run.id, headSha: run.headSha });
+  }
+
+  /**
+   * Arrange-only: place a Run left at `running`, as a worker killed mid-review
+   * leaves one.
+   *
+   * This state cannot be produced through the seam. The pipeline's catch block
+   * always runs and writes `failed`, so a mid-flight death is exactly the thing
+   * the seam cannot stage — which is why it is staged here instead. Seeding is
+   * arrange; nothing in the suite asserts on this store.
+   */
+  seedRunningRun(input: {
+    reviewId: string;
+    headSha: string;
+    startedAt?: Date;
+  }): string {
+    const run: StoredRun = {
+      id: this.id("run"),
+      reviewId: input.reviewId,
+      headSha: input.headSha,
+      status: "running",
+      outcomeReason: null,
+      costUsd: null,
+      startedAt: input.startedAt ?? new Date(),
+      results: [],
+    };
+    this.runs.push(run);
+    return run.id;
   }
 
   completeRun(input: PersistRunInput): Promise<void> {

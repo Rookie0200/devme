@@ -1,4 +1,5 @@
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
+import { isRunAbandoned } from "@/server/review/runLifecycle";
 
 /**
  * Review Run history.
@@ -17,14 +18,19 @@ import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 const FEED_LIMIT = 50;
 
 /**
- * After this, a Run still marked `running` is reported as interrupted.
+ * A Run still marked `running` past the threshold is reported as interrupted.
  *
- * Read-time interpretation only — no column, no worker, no sweep. The stored
- * row still says `running` because that is genuinely the last thing we knew.
+ * Still read-time interpretation only — no column, no worker, no sweep. The
+ * stored row says `running` because that is genuinely the last thing we knew.
  * Derived on the server so the answer does not depend on the reader's clock,
  * which would differ between the server render and the browser.
+ *
+ * The judgement itself comes from `isRunAbandoned`, shared with the Review
+ * Store, so that "interrupted" on this screen means exactly what the pipeline
+ * means when it takes a Run over. A copy of the number here would let the two
+ * drift, and the drift would show as a screen calling a Run dead while the
+ * pipeline still refuses to touch it.
  */
-const INTERRUPTED_AFTER_MS = 30 * 60 * 1000;
 
 export const reviewRunRouter = createTRPCRouter({
   /**
@@ -86,7 +92,7 @@ export const reviewRunRouter = createTRPCRouter({
       },
     });
 
-    const now = Date.now();
+    const now = new Date();
 
     return {
       installationCount: reachable.length,
@@ -107,8 +113,7 @@ export const reviewRunRouter = createTRPCRouter({
           accountLogin: repository.installation.accountLogin,
           url: `https://github.com/${repository.owner}/${repository.name}/pull/${row.review.pullRequestNumber}`,
           interrupted:
-            row.status === "running" &&
-            now - row.startedAt.getTime() > INTERRUPTED_AFTER_MS,
+            row.status === "running" && isRunAbandoned(row.startedAt, now),
         };
       }),
     };

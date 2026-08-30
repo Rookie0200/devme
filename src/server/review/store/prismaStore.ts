@@ -11,6 +11,7 @@ import type {
 } from "../ports";
 import type { Criterion } from "../types";
 import { criterionKey } from "../types";
+import { isRunAbandoned } from "../runLifecycle";
 
 /**
  * The production `ReviewStore`.
@@ -174,6 +175,7 @@ export class PrismaReviewStore implements ReviewStore {
   async startRun(input: {
     reviewId: string;
     headSha: string;
+    previousAttemptAbandoned: boolean;
   }): Promise<ReviewRunRecord | null> {
     // The unique constraint on (reviewId, headSha) is the duplicate-delivery
     // guard: two concurrent deliveries race here and exactly one wins.
@@ -184,7 +186,7 @@ export class PrismaReviewStore implements ReviewStore {
           headSha: input.headSha,
         },
       },
-      select: { id: true, status: true },
+      select: { id: true, status: true, startedAt: true },
     });
 
     if (existing) {
@@ -197,9 +199,35 @@ export class PrismaReviewStore implements ReviewStore {
       // is fixed by adding the link and reopening, which fires against this
       // same head commit; blocking here would make it permanently unreviewable
       // with no error raised anywhere.
-      if (existing.status !== "failed" && existing.status !== "declined") {
-        return null;
-      }
+      //
+      // Nor is a Run whose worker died holding it. Both arguments above apply
+      // to it verbatim, and it is worse than either: it is still `running`, so
+      // nothing will ever move it, and every route back — the queue's retry,
+      // a redelivery from the App settings, a reopen — arrives at this same
+      // commit and is refused. That case was not excluded on purpose; it was
+      // not imagined. Two facts can establish it, and the stronger comes
+      // first:
+      //
+      //   1. the queue says it has handed this job out before and the previous
+      //      attempt never finished, which is not a guess but the reason the
+      //      job came back; and
+      //   2. failing that, the Run has simply been running too long — for a
+      //      job lost rather than re-delivered, where nobody is left to say so.
+      //
+      // Elapsed time alone would not do. A stalled job returns within about a
+      // minute, when the Run is seconds old, so any threshold long enough to
+      // be safe is far too long to catch it — and any threshold short enough
+      // to catch it would evict Runs that are alive.
+      //
+      // `completed` is absent from all of this, which is the whole duplicate
+      // charge guard: an evaluation that finished is never re-run.
+      const mayTakeOver =
+        existing.status === "failed" ||
+        existing.status === "declined" ||
+        (existing.status === "running" &&
+          (input.previousAttemptAbandoned ||
+            isRunAbandoned(existing.startedAt)));
+      if (!mayTakeOver) return null;
       await client.reviewRun.update({
         where: { id: existing.id },
         data: {
