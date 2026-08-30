@@ -33,11 +33,23 @@ if [[ -z "$host" ]]; then
   exit 1
 fi
 
+# The box's SSH login user. OVHcloud (the default provider in the wizard)
+# assigns a non-root user named after the OS image ('ubuntu' for Ubuntu) and
+# the box's docker group is what lets that user run compose without sudo — see
+# the bootstrap stage in scripts/provisionProduction.sh. A Hetzner box
+# provisioned before that stage existed logs in as root, which is why this
+# still defaults to root when REMOTE_USER isn't in the provisioning env.
+user="${DEVME_USER:-}"
+if [[ -z "$user" && -f "$PROVISION_ENV" ]]; then
+  user=$(grep -E '^REMOTE_USER=' "$PROVISION_ENV" | tail -n1 | cut -d= -f2- || true)
+fi
+user="${user:-root}"
+
 branch="${DEVME_BRANCH:-main}"
 
-echo "▸ deploying ${branch} to ${host}"
+echo "▸ deploying ${branch} to ${user}@${host}"
 
-ssh -o StrictHostKeyChecking=accept-new "root@${host}" \
+ssh -o StrictHostKeyChecking=accept-new "${user}@${host}" \
   REMOTE_APP="$REMOTE_APP" REMOTE_ROOT="$REMOTE_ROOT" BRANCH="$branch" 'bash -s' <<'REMOTE'
 set -euo pipefail
 
@@ -66,4 +78,4 @@ REMOTE
 
 echo
 echo "✓ deployed. Recent worker output:"
-ssh "root@${host}" "cd ${REMOTE_APP} && docker compose logs --tail 20 worker"
+ssh "${user}@${host}" "cd ${REMOTE_APP} && docker compose logs --tail 20 worker"

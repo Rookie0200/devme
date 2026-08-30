@@ -199,8 +199,8 @@ banner "devme: provision the production single VM"
 # ── Stage 1: ground rules ─────────────────────────────────────────────────
 stage "Where this writes, and what you need first"
 say "This walks you through everything in .scratch/deploy-single-vm/spec.md"
-say "that a person has to do in a browser: a domain, Cloudflare, a Hetzner"
-say "box, a tunnel, a production GitHub App, and an R2 bucket."
+say "that a person has to do in a browser: a domain, Cloudflare, an"
+say "OVHcloud VPS, a tunnel, a production GitHub App, and an R2 bucket."
 say ""
 warn "It writes to $ENV_FILE — NOT the repo's .env."
 note "Your development .env keeps its own GitHub App, database and encryption"
@@ -217,8 +217,9 @@ for tool in openssl ssh scp; do
   fi
 done
 say ""
-say "You will also need: a payment card (domain ~₹1,000/yr, Hetzner ~€3.79/mo),"
-say "a Cloudflare account, and the GitHub account that owns this repository."
+say "You will also need: a payment card (domain ~₹1,000/yr, OVHcloud VPS-1"
+say "~₹420/mo + GST), a Cloudflare account, and the GitHub account that owns"
+say "this repository."
 pause "Ready?"
 
 # ── Stage 2: the domain ───────────────────────────────────────────────────
@@ -277,57 +278,56 @@ fi
 pause "Continue"
 
 # ── Stage 4: the box ──────────────────────────────────────────────────────
-stage "Create the Hetzner server"
-say "One CX22: 2 vCPU (x86), 4 GB RAM, ~€4.49-5.49/month (Hetzner repriced in"
-say "2026; check the console for the live number). Four gigabytes is the floor"
-say "because the image is built on the box — next build beside a running"
-say "Postgres will not fit in two."
+stage "Create the OVHcloud VPS"
+say "VPS-1: 2 vCPU, 4 GB RAM, 40 GB NVMe, ~₹420/mo + GST, Mumbai datacenter."
+say "Chosen over Hetzner for this deployment: real India latency, GST billing"
+say "instead of EU VAT, and no ARM-style stock shortage — this is a standard"
+say "shared-VPS product, not an inventory-constrained one."
 say ""
-note "x86 (CX), not ARM (CAX): CAX11 is ARM-only and its stock is genuinely"
-note "unreliable — a known, recurring 'currently unavailable' across Hetzner's"
-note "three ARM locations, not specific to your account. CX22 is the same"
-note "vendor, the same price band, and does not have that problem. Every"
-note "image this stack uses (bun, pgvector/pgvector, redis, cloudflared) ships"
-note "an x86 build, so nothing else changes."
+note "Known tradeoff: OVH's Asia-Pacific VPS plans (Mumbai/Singapore/Sydney)"
+note "carry a 500 GB/month bandwidth quota, then throttle to 10 Mbps. This"
+note "workload is a webhook receiver plus API calls, not public file serving —"
+note "very unlikely to bind, but worth knowing if traffic ever looks strange."
 say ""
-note "No India datacenter, and none is coming with this vendor — nearest is"
-note "Singapore. VAT is charged EU-style regardless of billing country; that"
-note "is not a form you're filling in wrong, it's how Hetzner bills everyone"
-note "outside an EU reverse-charge case. If that's a dealbreaker rather than"
-note "an annoyance, say so before continuing — DigitalOcean (Bangalore) and"
-note "Vultr (Mumbai) are the alternatives with an actual India region, at a"
-note "similar price, and would need a different provisioning path than this"
-note "one."
+warn "OVH's VPS login is NOT root. The default user is named after the OS"
+warn "image (Ubuntu image → user 'ubuntu'), confirmed in your delivery email."
+note "This wizard therefore captures that username and uses sudo for anything"
+note "privileged, rather than assuming root@ the way a Hetzner box would."
 say ""
 if [[ -f "$HOME/.ssh/id_ed25519.pub" ]]; then
-  note "Your public key (paste this into Hetzner):"
+  note "Your public key (paste this into OVH's SSH key field during checkout):"
   printf '\n'; sed 's/^/    /' "$HOME/.ssh/id_ed25519.pub"; printf '\n'
 elif confirm "No ~/.ssh/id_ed25519 found. Generate one now?"; then
   ssh-keygen -t ed25519 -N "" -f "$HOME/.ssh/id_ed25519"
-  note "Your public key (paste this into Hetzner):"
+  note "Your public key (paste this into OVH's SSH key field during checkout):"
   printf '\n'; sed 's/^/    /' "$HOME/.ssh/id_ed25519.pub"; printf '\n'
 else
   warn "You will need to add some SSH key to the server yourself."
 fi
-open_url "https://console.hetzner.cloud/"
-step "Create a project (or open your existing one) → Add Server."
-step "Location: Falkenstein, Nuremberg or Helsinki are cheapest; Singapore is"
-step "  closest to India if latency matters more than price to you. If one"
-step "  location shows a plan as unavailable, the others are worth a try —"
-step "  stock is genuinely per-datacenter."
-step "Image: Ubuntu 24.04."
-step "Type: Shared vCPU → x86 (Intel/AMD) → CX22 (2 vCPU, 4 GB)."
-step "SSH keys: add the public key printed above. Do NOT enable password auth."
-step "Create the server, then copy its public IPv4 address."
+open_url "https://www.ovhcloud.com/en-in/vps/"
+step "Choose VPS-1 (2 vCPU, 4 GB) → Datacenter: Mumbai."
+step "Image: the newest Ubuntu LTS offered (ideally 24.04 — OVH's image list"
+step "  changes; pick the closest available and note it down)."
+step "SSH key: paste the public key printed above, so you're not relying on"
+step "  the emailed password. If OVH does not offer this at order time, add"
+step "  it afterwards from the Control Panel before continuing."
+step "Complete the order, then find the server's public IPv4 in the Control"
+step "  Panel (Bare Metal Cloud → Virtual Private Servers) and check your"
+step "  delivery email for the exact login username."
 ask SERVER_IP "Paste the server's IPv4 address:"
 write_env SERVER_IP "$SERVER_IP"
+ask REMOTE_USER "SSH username from the delivery email [blank = 'ubuntu']:"
+REMOTE_USER="${REMOTE_USER:-ubuntu}"
+write_env REMOTE_USER "$REMOTE_USER"
 say ""
 say "Testing SSH (accept the host key if prompted):"
-if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "root@${SERVER_IP}" true 2>/dev/null; then
+if ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "${REMOTE_USER}@${SERVER_IP}" true 2>/dev/null; then
   note "✓ SSH works."
 else
-  warn "Could not SSH to root@${SERVER_IP} yet. The box may still be booting."
-  note "Try 'ssh root@${SERVER_IP}' in another terminal before continuing."
+  warn "Could not SSH to ${REMOTE_USER}@${SERVER_IP} yet. The box may still be"
+  warn "provisioning, or the username from the delivery email may differ from"
+  warn "what was entered above — check the email if this keeps failing."
+  note "Try 'ssh ${REMOTE_USER}@${SERVER_IP}' in another terminal."
   pause "Continue once SSH works"
 fi
 
@@ -339,26 +339,41 @@ say ""
 note "Nothing but SSH is opened because ingress arrives through the tunnel as"
 note "an outbound connection — the box never listens on 80 or 443."
 say ""
+say ""
+note "The login user is not root (see the previous stage), so every"
+note "privileged step below runs under sudo. Bootstrap also adds"
+note "'${REMOTE_USER}' to the docker group, so deploy.sh and the cron jobs"
+note "in a later stage never need sudo themselves — only this one-time setup"
+note "does. Group membership needs a fresh SSH connection to take effect,"
+note "which the reconnect below provides."
+say ""
 if confirm "Run the bootstrap on ${SERVER_IP} now?"; then
-  ssh -o StrictHostKeyChecking=accept-new "root@${SERVER_IP}" 'bash -s' <<'BOOTSTRAP'
+  ssh -o StrictHostKeyChecking=accept-new "${REMOTE_USER}@${SERVER_IP}" \
+    "REMOTE_USER='${REMOTE_USER}' bash -s" <<'BOOTSTRAP'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq ca-certificates curl git ufw
+sudo apt-get update -qq
+sudo apt-get install -y -qq ca-certificates curl git ufw
 if ! command -v docker >/dev/null 2>&1; then
-  curl -fsSL https://get.docker.com | sh
+  curl -fsSL https://get.docker.com | sudo sh
 fi
-systemctl enable --now docker
-ufw allow OpenSSH
-ufw --force enable
-mkdir -p /opt/devme
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$REMOTE_USER"
+sudo ufw allow OpenSSH
+sudo ufw --force enable
+sudo mkdir -p /opt/devme
+sudo chown "$REMOTE_USER":"$REMOTE_USER" /opt/devme
 echo "--- bootstrap complete ---"
 docker --version
-docker compose version
+sudo docker compose version
 BOOTSTRAP
-  note "✓ Box prepared."
+  note "✓ Box prepared. Reconnecting once so the docker group takes effect..."
+  ssh -o StrictHostKeyChecking=accept-new "${REMOTE_USER}@${SERVER_IP}" \
+    "docker compose version" >/dev/null 2>&1 \
+    && note "✓ ${REMOTE_USER} can run docker without sudo." \
+    || warn "docker group membership hasn't taken effect yet — it will after your next fresh SSH session (this is normal, not an error)."
 else
-  SKIPPED+=("bootstrap ${SERVER_IP}: install docker, ufw allow OpenSSH, mkdir /opt/devme")
+  SKIPPED+=("bootstrap ${SERVER_IP}: install docker, add ${REMOTE_USER} to the docker group, ufw allow OpenSSH, mkdir+chown /opt/devme")
   warn "Skipped. Do it by hand before deploying."
 fi
 pause "Continue"
@@ -370,7 +385,7 @@ say "Cloudflare. That is what gives you TLS without certbot, and what makes"
 say "the box's IP irrelevant — rebuild it and nothing GitHub knows changes."
 open_url "https://one.dash.cloudflare.com/"
 step "Zero Trust → Networks → Tunnels → Create a tunnel."
-step "Connector type: Cloudflared. Name it 'devme-prod'."
+step "Connector type: Cloudflared. Name it 'claimcheck-prod'."
 step "On the install page, IGNORE the install instructions — compose runs the"
 step "  connector for you. You only need the token: it is the long string in"
 step "  the shown command, right after '--token'."
@@ -590,17 +605,17 @@ note "  https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
 stage "Send the environment to the box"
 chmod 600 "$ENV_FILE"
 say "Everything is captured. The last step is putting $ENV_FILE on the server"
-say "at /opt/devme/.env, readable only by root."
+say "at /opt/devme/.env, readable only by ${REMOTE_USER}."
 say ""
 note "It is not in the repository and never will be: compose reads it from"
 note "disk, and it is not baked into the image."
 say ""
-if confirm "Copy $ENV_FILE to root@${SERVER_IP}:/opt/devme/.env now?"; then
-  scp -o StrictHostKeyChecking=accept-new "$ENV_FILE" "root@${SERVER_IP}:/opt/devme/.env"
-  ssh "root@${SERVER_IP}" "chmod 600 /opt/devme/.env"
+if confirm "Copy $ENV_FILE to ${REMOTE_USER}@${SERVER_IP}:/opt/devme/.env now?"; then
+  scp -o StrictHostKeyChecking=accept-new "$ENV_FILE" "${REMOTE_USER}@${SERVER_IP}:/opt/devme/.env"
+  ssh "${REMOTE_USER}@${SERVER_IP}" "chmod 600 /opt/devme/.env"
   note "✓ Copied and locked down."
 else
-  SKIPPED+=("scp $ENV_FILE root@${SERVER_IP}:/opt/devme/.env && chmod 600")
+  SKIPPED+=("scp $ENV_FILE ${REMOTE_USER}@${SERVER_IP}:/opt/devme/.env && chmod 600")
 fi
 
 finish
@@ -608,7 +623,7 @@ finish
 say "What is left, in order:"
 say ""
 step "1. Clone the repo onto the box:"
-note "     ssh root@${SERVER_IP} 'git clone <repo-url> /opt/devme/app'"
+note "     ssh ${REMOTE_USER}@${SERVER_IP} 'git clone <repo-url> /opt/devme/app'"
 step "2. Deploy: ./deploy.sh  (builds the image on the box and starts compose)"
 step "3. Run the migrations — 'prisma migrate deploy', NEVER 'migrate dev'."
 warn "   This is the first time the migration chain has run against an empty"
