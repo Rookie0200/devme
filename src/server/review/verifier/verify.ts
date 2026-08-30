@@ -4,12 +4,18 @@ import type {
   VerifiedCriterionResult,
   VerifiedFinding,
   VerifiedOutput,
-  Verdict,
 } from "../types";
 import { isStylistic } from "./stylistic";
 
-/** The hard cap. Forces ranking rather than exhaustive listing. */
-export const MAX_REPORTED_ITEMS = 10;
+/**
+ * The hard cap on Findings. Forces ranking rather than exhaustive listing.
+ *
+ * Criteria are deliberately not capped: a criterion with no verdict is a gap
+ * in the contract the pull request is being judged against, and how many
+ * there are is the Issue author's choice. A Finding that did not make the cut
+ * is an opinion withheld. See `docs/adr/0007`.
+ */
+export const MAX_REPORTED_FINDINGS = 5;
 
 /**
  * Fetches a file's contents so a citation can be checked, or `null` if the
@@ -119,29 +125,28 @@ function evidenceLocation(evidence: ProposedEvidence) {
     : { evidenceFile: null, evidenceStartLine: null, evidenceEndLine: null };
 }
 
-/** Most informative first, so that the cap drops the least useful items. */
-const PRIORITY: Record<Verdict | "finding", number> = {
-  unsatisfied: 0,
-  unclear: 1,
-  finding: 2,
-  satisfied: 3,
-};
-
 /**
  * The only path to a pull request.
  *
  * Every proposal is either grounded in Evidence the Verifier could
  * independently locate, or discarded. Nothing self-reported by a Producer —
  * confidence, severity, its own claim to be non-stylistic — is trusted.
+ *
+ * Both lists come out in the order the Producer raised them, so the criteria
+ * table reads in issue order. There is no ranking pass: criteria are not
+ * competing for anything, and Findings have no verdict to rank them by.
  */
 export async function verify(input: VerifyInput): Promise<VerifiedOutput> {
-  const survivors: Array<{
-    priority: number;
-    order: number;
-    proposal: Proposal;
-  }> = [];
+  const results: VerifiedCriterionResult[] = [];
+  const findings: VerifiedFinding[] = [];
 
-  for (const [order, proposal] of input.proposals.entries()) {
+  // One verdict per criterion. A second proposal naming a criterion already
+  // judged is dropped rather than becoming a second row sharing
+  // `(reviewRunId, criterionId)`, which fails the whole persistence
+  // transaction after the Producer and Verifier have already been paid for.
+  const judged = new Set<string>();
+
+  for (const proposal of input.proposals) {
     if (isStylistic(producerProse(proposal))) continue;
 
     const strict =
@@ -149,28 +154,6 @@ export async function verify(input: VerifyInput): Promise<VerifiedOutput> {
 
     if (!(await isGrounded(proposal.evidence, strict, input))) continue;
 
-    survivors.push({
-      priority:
-        proposal.kind === "finding"
-          ? PRIORITY.finding
-          : PRIORITY[proposal.verdict],
-      order,
-      proposal,
-    });
-  }
-
-  const kept = survivors
-    .sort((a, b) => a.priority - b.priority || a.order - b.order)
-    .slice(0, MAX_REPORTED_ITEMS)
-    // Rank to select, but report in the order the Producer raised them, so the
-    // criteria table still reads in issue order.
-    .sort((a, b) => a.order - b.order)
-    .map((entry) => entry.proposal);
-
-  const results: VerifiedCriterionResult[] = [];
-  const findings: VerifiedFinding[] = [];
-
-  for (const proposal of kept) {
     if (proposal.kind === "finding") {
       findings.push({
         producer: proposal.producer,
@@ -178,6 +161,13 @@ export async function verify(input: VerifyInput): Promise<VerifiedOutput> {
         ...evidenceLocation(proposal.evidence),
       });
     } else {
+      // Deliberately *after* grounding, so "first" means first to survive. A
+      // duplicate can then only ever be redundant: were this above the checks,
+      // an ungrounded first proposal would suppress a solid second one and
+      // cost the criterion its verdict entirely.
+      if (judged.has(proposal.criterionKey)) continue;
+      judged.add(proposal.criterionKey);
+
       results.push({
         criterionKey: proposal.criterionKey,
         verdict: proposal.verdict,
@@ -187,5 +177,5 @@ export async function verify(input: VerifyInput): Promise<VerifiedOutput> {
     }
   }
 
-  return { results, findings };
+  return { results, findings: findings.slice(0, MAX_REPORTED_FINDINGS) };
 }

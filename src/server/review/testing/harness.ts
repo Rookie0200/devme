@@ -167,3 +167,13 @@ export function criterionRows(commentBody: string): string[] {
     .split("\n")
     .filter((line) => /^\|\s*(✅|⚠️|❔)\s*\|/.test(line));
 }
+
+/** Bullets of the "Also noticed" section, one per reported Finding. */
+export function findingBullets(commentBody: string): string[] {
+  const start = commentBody.indexOf("**Also noticed**");
+  if (start === -1) return [];
+  return commentBody
+    .slice(start)
+    .split("\n")
+    .filter((line) => line.startsWith("- "));
+}

@@ -45,12 +45,13 @@ _Avoid_: treating "Run" as a synonym for "evaluation" — a declined Run evaluat
 _Avoid_: reading a Run as the record of a single attempt. That reading is what made an abandoned Run look like a commit that had already been handled.
 
 **Criterion Result**:
-The verdict a Review Run reaches on one Acceptance Criterion — satisfied, unsatisfied, or unclear — together with the evidence supporting it.
+The verdict a Review Run reaches on one Acceptance Criterion — satisfied, unsatisfied, or unclear — together with the evidence supporting it. **At most one per Acceptance Criterion per Run, and possibly none**: a Run may reach no verdict on a criterion, either because it never judged it or because the verdict it reached could not be grounded in Evidence. A criterion with no Criterion Result is a gap in the specification the pull request was measured against, and the Review reports how many there were rather than passing over them.
 _Avoid_: indeterminate (the state is named `unclear` in the schema and the rendered comment; keep the prose and the code in step)
+_Avoid_: `unclear` as the name for a criterion that got no verdict — `unclear` is a verdict, reached about a diff that was genuinely ambiguous. No verdict at all is the absence of one.
 _Avoid_: Check, status, assessment
 
 **Finding**:
-An observation about a pull request that is not tied to an Acceptance Criterion, such as a security concern. Findings and Criterion Results are reported together but are judged by different rules.
+An observation about a pull request that is not tied to an Acceptance Criterion, such as a security concern. Findings and Criterion Results are reported together but are judged by different rules — and are **not ranked against each other**, because a criterion is owed a verdict while a Finding is an opinion offered. See `docs/adr/0007`.
 _Avoid_: Issue, comment, violation, nitpick
 
 **Evidence**:

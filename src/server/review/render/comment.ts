@@ -33,6 +33,26 @@ export interface RenderCommentInput {
   headSha: string;
 }
 
+/**
+ * Acceptance Criteria this Run reached no verdict on.
+ *
+ * A criterion arrives here because the Producer never proposed on it, or
+ * because the Verifier could not ground the proposal it made. Both mean the
+ * same thing to a reader — part of the spec went unjudged — so they are not
+ * distinguished. Shared with the Check Run summary so the two surfaces cannot
+ * report different numbers.
+ */
+export function unreportedCriteria(
+  criteria: Criterion[],
+  results: Array<{ criterionKey: string }>,
+): Criterion[] {
+  const reported = new Set(results.map((result) => result.criterionKey));
+  return criteria.filter(
+    (criterion) =>
+      !reported.has(criterionKey(criterion.issueNumber, criterion.ordinal)),
+  );
+}
+
 /** A literal pipe would break out of the table cell. */
 function cell(text: string): string {
   return text.replace(/\|/g, "\\|").replace(/\n+/g, " ").trim();
@@ -104,6 +124,19 @@ export function renderReviewComment(input: RenderCommentInput): string {
     sections.push(
       "**No acceptance criteria could be grounded in this diff.** Nothing is reported rather than guessing.",
     );
+  } else {
+    // A report that omitted part of the spec says so. Silence is what made
+    // this dangerous: the comment renders what it was handed and looks
+    // complete either way. Suppressed above, where the fallback already says
+    // it at greater length.
+    const missing = unreportedCriteria(criteria, results).length;
+    if (missing > 0) {
+      sections.push(
+        missing === 1
+          ? "*1 acceptance criterion could not be judged from this diff and is not listed.*"
+          : `*${missing} acceptance criteria could not be judged from this diff and are not listed.*`,
+      );
+    }
   }
 
   if (findings.length > 0) {

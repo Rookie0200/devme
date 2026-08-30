@@ -230,6 +230,23 @@ export class InMemoryReviewStore implements ReviewStore {
   }
 
   completeRun(input: PersistRunInput): Promise<void> {
+    // `CriterionResult` is unique on `(reviewRunId, criterionId)`, and
+    // `createMany` violates that against its own payload — no pre-existing
+    // rows required. Enforced here because a fake that accepts what Postgres
+    // rejects makes the defect unreachable from the suite: the whole Run
+    // fails at the persistence step, after the model has been paid for.
+    const seen = new Set<string>();
+    for (const result of input.results) {
+      if (seen.has(result.criterionId)) {
+        return Promise.reject(
+          new Error(
+            `Unique constraint failed on (reviewRunId, criterionId): ${result.criterionId}`,
+          ),
+        );
+      }
+      seen.add(result.criterionId);
+    }
+
     const run = this.runs.find((candidate) => candidate.id === input.runId);
     if (run) {
       run.status = "completed";
