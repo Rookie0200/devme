@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { isRunAbandoned } from "@/server/review/runLifecycle";
 
@@ -32,6 +34,40 @@ const FEED_LIMIT = 50;
  * pipeline still refuses to touch it.
  */
 
+/**
+ * Narrowing the feed to one Installation.
+ *
+ * The filter arrives as a query parameter on `/dashboard/runs` rather than as
+ * a control on it — `docs/adr/0006` keeps this screen to one question, and a
+ * control implies a browsing surface the screen does not have. The parameter
+ * is optional, and absent means every reachable Installation.
+ */
+const listInput = z
+  .object({
+    /** GitHub's own installation id, as a string because it came from a URL. */
+    installation: z.string().optional(),
+  })
+  .optional();
+
+/**
+ * The Installation id a feed was asked to narrow to, or `null` for all of them.
+ *
+ * A value that is not a positive integer cannot name an Installation at all,
+ * so it is discarded and the feed stays unfiltered: a mistyped URL showing an
+ * empty history reads as "the reviewer never ran", which is the one thing this
+ * screen exists to answer correctly.
+ *
+ * A well-formed id is matched against the reachable set instead, and a miss
+ * yields an empty feed rather than an error. We cannot distinguish "no such
+ * Installation" from "not yours", and answering those two differently is
+ * exactly the existence leak `installation.assertReachable` avoids.
+ */
+function parseInstallationId(raw: string | undefined): bigint | null {
+  if (raw === undefined || !/^\d+$/.test(raw)) return null;
+  const value = BigInt(raw);
+  return value > 0n ? value : null;
+}
+
 export const reviewRunRouter = createTRPCRouter({
   /**
    * The most recent Review Runs across every Installation the signed-in user
@@ -44,14 +80,54 @@ export const reviewRunRouter = createTRPCRouter({
    * reach. Removing that restriction does not raise an error and does not
    * break the page; it makes the feed show other tenants' pull request titles.
    * `reviewRun.test.ts` exists for exactly that.
+   *
+   * An optional `installation` narrows the feed to one of them. It is applied
+   * here rather than by the page, so the cap counts the Runs the reader is
+   * actually shown: filtering after `take` would silently hide Runs that were
+   * inside the cap.
    */
-  list: protectedProcedure.query(async ({ ctx }) => {
+  list: protectedProcedure.input(listInput).query(async ({ ctx, input }) => {
     const reachable = await ctx.github.reachableInstallations(ctx.user.id);
     if (reachable.length === 0) {
-      return { installationCount: 0, limit: FEED_LIMIT, runs: [] };
+      return {
+        installationCount: 0,
+        limit: FEED_LIMIT,
+        filter: null,
+        runs: [],
+      };
     }
 
-    const ids = reachable.map((i) => BigInt(i.githubInstallationId));
+    const requested = parseInstallationId(input?.installation);
+
+    // The filter narrows the reachable set; it never widens it. Applying it
+    // here rather than to the query keeps authorization and presentation as
+    // one `where` clause instead of two that could drift apart.
+    const selected =
+      requested === null
+        ? reachable
+        : reachable.filter((i) => BigInt(i.githubInstallationId) === requested);
+
+    const filter =
+      requested === null
+        ? null
+        : {
+            githubInstallationId: requested.toString(),
+            // Absent when the id names nothing this reader can reach. The
+            // screen has no name to show, and inventing one would confirm the
+            // Installation exists.
+            accountLogin: selected[0]?.accountLogin ?? null,
+          };
+
+    if (selected.length === 0) {
+      return {
+        installationCount: reachable.length,
+        limit: FEED_LIMIT,
+        filter,
+        runs: [],
+      };
+    }
+
+    const ids = selected.map((i) => BigInt(i.githubInstallationId));
 
     const rows = await ctx.client.reviewRun.findMany({
       where: {
@@ -97,6 +173,7 @@ export const reviewRunRouter = createTRPCRouter({
     return {
       installationCount: reachable.length,
       limit: FEED_LIMIT,
+      filter,
       runs: rows.map((row) => {
         const repository = row.review.repository;
         return {

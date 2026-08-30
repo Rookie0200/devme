@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 
 type Feed = RouterOutputs["reviewRun"]["list"];
 type Run = Feed["runs"][number];
+type Filter = NonNullable<Feed["filter"]>;
 
 /**
  * Fixed locale and time zone, for the same reason the Installation cards use
@@ -72,24 +73,56 @@ export function Runs({
   showAccount: boolean;
 }) {
   if (feed.installationCount === 0) return <NoInstallations installUrl={installUrl} />;
-  if (feed.runs.length === 0) return <NoRuns />;
 
   return (
     <div className="flex flex-col gap-3">
-      <ul className="flex flex-col divide-y">
-        {feed.runs.map((run) => (
-          <RunRow key={run.id} run={run} showAccount={showAccount} />
-        ))}
-      </ul>
+      {/* Above the list, and rendered even when the list is empty: a filtered
+          feed showing nothing is indistinguishable from a reviewer that never
+          ran, unless the narrowing is stated where the reader is looking. */}
+      {feed.filter && <FilterNotice filter={feed.filter} />}
 
-      {/* Stated rather than silently truncated: a capped list that presents
-          itself as complete lets a reader conclude older Runs never happened. */}
-      {feed.runs.length === feed.limit && (
-        <p className="text-muted-foreground text-xs">
-          Showing the {feed.limit} most recent runs.
-        </p>
+      {feed.runs.length === 0 ? (
+        <NoRuns filtered={feed.filter !== null} />
+      ) : (
+        <>
+          <ul className="flex flex-col divide-y">
+            {feed.runs.map((run) => (
+              <RunRow key={run.id} run={run} showAccount={showAccount} />
+            ))}
+          </ul>
+
+          {/* Stated rather than silently truncated: a capped list that presents
+              itself as complete lets a reader conclude older Runs never happened.
+              The cap is the router's, so it binds a filtered feed identically. */}
+          {feed.runs.length === feed.limit && (
+            <p className="text-muted-foreground text-xs">
+              Showing the {feed.limit} most recent runs.
+            </p>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+/**
+ * The active filter, named, with the way back out of it.
+ *
+ * There is no control to unset — the filter is a URL, so the link is the
+ * whole affordance.
+ */
+function FilterNotice({ filter }: { filter: Filter }) {
+  return (
+    <p className="text-muted-foreground text-xs">
+      Showing runs from{" "}
+      <span className="text-foreground font-medium">
+        {filter.accountLogin ?? `installation ${filter.githubInstallationId}`}
+      </span>{" "}
+      only.{" "}
+      <Link href="/dashboard/runs" className="underline">
+        Show all installations
+      </Link>
+    </p>
   );
 }
 
@@ -123,10 +156,12 @@ function RunRow({ run, showAccount }: { run: Run; showAccount: boolean }) {
   );
 }
 
-function NoRuns() {
+function NoRuns({ filtered }: { filtered: boolean }) {
   return (
     <div className="flex flex-col items-start gap-2">
-      <h2 className="font-medium">No runs yet</h2>
+      <h2 className="font-medium">
+        {filtered ? "No runs for this installation" : "No runs yet"}
+      </h2>
       <p className="text-muted-foreground text-sm">
         A run happens when a pull request is opened or pushed to on a repository
         this installation can reach. The pull request has to link an issue with
