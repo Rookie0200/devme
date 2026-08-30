@@ -141,6 +141,12 @@ export async function verify(input: VerifyInput): Promise<VerifiedOutput> {
     proposal: Proposal;
   }> = [];
 
+  // One verdict per criterion. A second proposal naming a criterion already
+  // judged is dropped here rather than becoming a second row sharing
+  // `(reviewRunId, criterionId)`, which fails the whole persistence
+  // transaction after the Producer and Verifier have already been paid for.
+  const judged = new Set<string>();
+
   for (const [order, proposal] of input.proposals.entries()) {
     if (isStylistic(producerProse(proposal))) continue;
 
@@ -148,6 +154,15 @@ export async function verify(input: VerifyInput): Promise<VerifiedOutput> {
       proposal.kind === "finding" || proposal.verdict !== "satisfied";
 
     if (!(await isGrounded(proposal.evidence, strict, input))) continue;
+
+    // Deliberately *after* grounding, so "first" means first to survive. A
+    // duplicate can then only ever be redundant: were this above the checks,
+    // an ungrounded first proposal would suppress a solid second one and cost
+    // the criterion its verdict entirely.
+    if (proposal.kind === "criterion") {
+      if (judged.has(proposal.criterionKey)) continue;
+      judged.add(proposal.criterionKey);
+    }
 
     survivors.push({
       priority:

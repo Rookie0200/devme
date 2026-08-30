@@ -357,6 +357,35 @@ describe("the verifier", () => {
 
     expect(criterionRows(harness.github.soleCommentBody)).toHaveLength(10);
   });
+
+  test("reports one verdict when the producer proposes twice for one criterion", async () => {
+    const harness = await createHarness({
+      scripts: {
+        "extract-criteria": [extractScript(CRITERIA_142)],
+        produce: [
+          produceScript([
+            criterionProposal("142:0", "satisfied", GOOD_CITATION),
+            // The Producer contradicts itself. Persisting both results
+            // violates the unique constraint they share, which fails the
+            // whole Run at the persistence step — after the model has been
+            // paid for, and recoverable only by paying for it again.
+            criterionProposal("142:0", "unsatisfied", RETRY_AFTER_CITATION),
+            criterionProposal("142:1", "satisfied", RETRY_AFTER_CITATION),
+          ]),
+        ],
+      },
+    });
+    seedRepository(harness.github);
+
+    await harness.deliverPullRequest();
+
+    const rows = criterionRows(harness.github.soleCommentBody);
+    expect(rows).toHaveLength(2);
+    // The first proposal to survive verification wins, so the contradicted
+    // criterion reads as the Producer first called it.
+    expect(rows[0]).toContain("✅");
+    expect(rows[0]).toContain(CRITERIA_142[0]);
+  });
 });
 
 describe("states that are reported instead of reviewed", () => {
