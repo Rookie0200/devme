@@ -81,6 +81,34 @@ the stronger first:
 - **Nothing needed to be built to make retries arrive.** BullMQ was already configured for three
   attempts with exponential backoff and already re-delivers stalled jobs. They arrived today and were
   thrown away by one condition. The change is a decision, not a mechanism.
+- **Verified live on 2026-08-30, because the suite structurally cannot see any of this.** The seam
+  tests drive the inline queue and the in-memory store, so they say nothing about whether BullMQ
+  really re-delivers a stalled job or whether `PrismaReviewStore` really takes a Run over. A real
+  pull request on `Rookie0200/devme`, against an Issue carrying this branch's Acceptance Criteria,
+  closed both gaps at once. The worker was killed with `SIGKILL` at file 16 of 66 during the cold
+  first index — a graceful `SIGINT` drains and would have proved nothing. The Run sat at `running`
+  with no worker behind it: the state that used to claim the commit forever. Restarting the worker
+  returned the job about eighty seconds later, and the Run was **taken over in place** — same row id,
+  `startedAt` reset from `06:28:20.883Z` to `06:31:08.145Z`, **one row for the head commit, not
+  two**. It then ran to completion at `06:35:40.338Z`, `$0.0268` on `claude-haiku-4-5`, six criterion
+  results and four findings, and the placeholder indexing comment was replaced by the review. The
+  comment's footer read **"Reviewed once"** after two attempts at that commit, which is the row reuse
+  confirmed where a customer would see it rather than only in Postgres: a second Run would have made
+  `countRuns` say twice.
+- **It is the restart that triggers recovery, not the kill.** BullMQ's stalled scan runs only inside
+  a live worker, so a queue with no worker on it recovers nothing and waits indefinitely. Obvious in
+  hindsight and surprising in the moment; worth knowing before diagnosing a Run that "should have
+  come back by now".
+- **Only the first of the two signals was exercised.** The queue reported the re-delivery, so
+  `previousAttemptAbandoned` carried the takeover and `isRunAbandoned` was never consulted. The
+  elapsed-time fallback remains covered by the seam tests alone, against a seeded Run — which is the
+  weaker evidence of the two, and is the path a lost job rather than a re-delivered one would take.
+- **The kill landed before any embedding row was written, which flattered the retake.** The index
+  rebuilt from zero to 66 rows because `ensureIndexed` had written nothing yet. A worker dying
+  *inside* the write loop would leave rows behind, and `ensureIndexed` returns early on
+  `existing > 0` — so a partial index would be treated as complete for good. That is a real hazard on
+  the same path, it was not exercised, and it belongs with the Codebase Index integrity work already
+  deferred rather than with this amendment.
 - **This is the second instance of one failure shape**: a durable row claiming a commit forever, with
   no error anywhere, presenting to everyone as the reviewer having nothing to say. The first was the
   queue's job-id de-duplication, removed above. Both were invisible to reasoning about the schema and
