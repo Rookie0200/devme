@@ -34,7 +34,11 @@ describe("route guarding", () => {
   });
 
   test("leaves the marketing page and auth routes public", async () => {
-    for (const path of ["/", "/sign-in", "/sign-up", "/api/auth/callback/github"]) {
+    // `/sign-up` was removed with the page it guarded: GitHub OAuth has no
+    // separate registration step, so a "Create Account" route had nothing to
+    // do — and the page it served called a Google provider `auth.ts` has not
+    // configured since Google was dropped.
+    for (const path of ["/", "/sign-in", "/api/auth/callback/github"]) {
       const response = await middleware(anonymousRequestTo(path));
       expect(response.headers.get("location")).toBeNull();
     }

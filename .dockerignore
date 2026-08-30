@@ -1,0 +1,13 @@
+.git
+.github
+node_modules
+.next
+.env
+.env.*
+.scratch
+docs
+*.md
+!README.md
+.vscode
+tsconfig.tsbuildinfo
+start-database.sh

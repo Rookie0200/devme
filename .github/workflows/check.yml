@@ -1,0 +1,32 @@
+# The gate, on a machine that is not the maintainer's laptop.
+#
+# `bun run check` is lint + tsc + bun test. It needs no secrets: the script
+# sets SKIP_ENV_VALIDATION=1 precisely so that the gate depends on the code
+# rather than on whether a particular .env happens to be complete.
+#
+# Deliberately only the gate. No build, no deploy, no database, no registry —
+# there is one box and it builds its own image (docs/adr/0002).
+
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # `postinstall` runs `prisma generate`, which tsc needs for @prisma/client.
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Check
+        run: bun run check

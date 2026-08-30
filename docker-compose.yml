@@ -1,0 +1,102 @@
+# The single VM, as decided in docs/adr/0002.
+#
+# Five services on one box: Postgres with pgvector, Redis, the Next.js server,
+# the BullMQ worker, and the Cloudflare tunnel connector. Nothing publishes a
+# port — ingress arrives as an outbound connection from `cloudflared`, so the
+# host firewall allows only SSH.
+#
+# The environment lives at /opt/devme/.env, outside the checkout, written by
+# scripts/provisionProduction.sh. It is never baked into the image.
+#
+#   docker compose --env-file /opt/devme/.env up -d --build
+
+name: devme
+
+# All three application services are the same image with different commands.
+x-app: &app
+  image: devme-app:latest
+  build:
+    context: .
+    target: runtime
+  env_file:
+    - /opt/devme/.env
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: devme
+      POSTGRES_DB: devme
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD missing from the env file}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devme -d devme"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # BullMQ holds queued and delayed jobs here. Without persistence, a reboot
+    # silently drops any review that was waiting to run.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot. Validates the env schema, then applies migrations. Web and worker
+  # wait for it to exit successfully, so a bad env or a failed migration stops
+  # the deploy instead of producing a running app that fails on first review.
+  migrate:
+    <<: *app
+    restart: "no"
+    command: ["./scripts/migrateAndValidate.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    <<: *app
+    command: ["bun", "run", "start"]
+    expose:
+      - "3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    command: ["bun", "run", "src/worker.ts"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    # Routes https://<domain> to web:3000 — the hostname mapping is configured
+    # in the Cloudflare Zero Trust dashboard, not here.
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${TUNNEL_TOKEN:?TUNNEL_TOKEN missing from the env file}
+    depends_on:
+      - web
+
+volumes:
+  postgres-data:
+  redis-data:
