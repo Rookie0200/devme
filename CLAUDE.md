@@ -44,6 +44,22 @@ There is no acceptable-error count any more — if lint reports an error, you in
 `FakeCodebaseIndex`, so `PrismaReviewStore` and `PrismaCodebaseIndex` are never exercised. A schema
 change needs a live Review Run against a real pull request as evidence; a green suite is not it.
 
+### Never push, never open a pull request
+
+Committing locally is fine and expected. **Anything that reaches GitHub is the maintainer's to run** —
+`git push`, `gh pr create`, `gh pr merge`, and any other command that publishes. Do not attempt them,
+and do not look for a way around a failure.
+
+Hand over the **content**, in the reply, ready to copy into the GitHub web interface: the branch name,
+the title, and the pull request body as a fenced markdown block. Not a path to a file, and not a
+`gh --body-file` invocation pointing at one — the maintainer opens pull requests in the browser, and a
+scratchpad path is useless there and gone by the next session.
+
+This is not only a credentials problem, though it is that too: the push remote is an SSH host alias
+with a passphrase-protected key and no agent, and `gh` is not logged in, so the attempt fails anyway
+and wastes a turn. The rule stands regardless of whether some future environment would let it
+succeed.
+
 ## Architecture
 
 DevMe is a T3-stack app (Next.js 15 App Router, tRPC v11, Prisma, Tailwind v4, shadcn/ui). It is a
