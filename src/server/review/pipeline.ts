@@ -17,6 +17,7 @@ import {
   renderIndexingComment,
   renderMissingProviderKeyComment,
   renderReviewComment,
+  unreportedCriteria,
 } from "./render/comment";
 
 export interface PipelineDeps {
@@ -302,10 +303,10 @@ function summarise(
   const counts = { satisfied: 0, unsatisfied: 0, unclear: 0 };
   for (const result of results) counts[result.verdict] += 1;
 
-  const reported = new Set(results.map((r) => r.criterionKey));
-  const unreported = criteria.filter(
-    (c) => !reported.has(criterionKey(c.issueNumber, c.ordinal)),
-  ).length;
+  // The same count the comment states, from the same helper: two surfaces
+  // disagreeing about how much of the spec went unjudged is worse than
+  // either of them being silent.
+  const unreported = unreportedCriteria(criteria, results).length;
 
   const parts = [
     `${counts.satisfied} satisfied`,

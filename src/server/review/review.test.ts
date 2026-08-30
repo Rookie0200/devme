@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createHarness,
   criterionRows,
+  findingBullets,
   OWNER,
   REPO,
 } from "./testing/harness";
@@ -337,7 +338,7 @@ describe("the verifier", () => {
     expect(criterionRows(body)).toHaveLength(2);
   });
 
-  test("truncates to ten items so the reviewer has to prioritise", async () => {
+  test("reports every acceptance criterion, however many there are", async () => {
     const many = Array.from({ length: 12 }, (_, i) => `Criterion number ${i}`);
     const harness = await createHarness({
       scripts: {
@@ -355,7 +356,65 @@ describe("the verifier", () => {
 
     await harness.deliverPullRequest();
 
-    expect(criterionRows(harness.github.soleCommentBody)).toHaveLength(10);
+    const body = harness.github.soleCommentBody;
+    expect(criterionRows(body)).toHaveLength(12);
+    expect(body).not.toContain("not listed");
+  });
+
+  /**
+   * The negative control for the one above, and the case that matters. With
+   * no Findings competing, a single shared budget of twelve or more is
+   * indistinguishable from separate budgets — only a Run carrying both kinds
+   * can tell them apart, and re-merging the budgets is exactly the change
+   * someone makes later while tidying up.
+   */
+  test("does not let findings displace criteria", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => `Criterion number ${i}`);
+    const harness = await createHarness({
+      scripts: {
+        "extract-criteria": [extractScript(many)],
+        produce: [
+          produceScript([
+            ...many.map((_, i) =>
+              criterionProposal(`142:${i}`, "satisfied", GOOD_CITATION),
+            ),
+            ...Array.from({ length: 8 }, (_, i) =>
+              findingProposal(`Observation number ${i}`, GOOD_CITATION),
+            ),
+          ]),
+        ],
+      },
+    });
+    seedRepository(harness.github);
+
+    await harness.deliverPullRequest();
+
+    const body = harness.github.soleCommentBody;
+    expect(criterionRows(body)).toHaveLength(12);
+    expect(findingBullets(body)).toHaveLength(5);
+  });
+
+  test("states how many criteria went unjudged rather than omitting them silently", async () => {
+    const harness = await createHarness({
+      scripts: {
+        "extract-criteria": [extractScript(CRITERIA_142)],
+        // Only the first criterion is proposed on at all.
+        produce: [
+          produceScript([
+            criterionProposal("142:0", "satisfied", GOOD_CITATION),
+          ]),
+        ],
+      },
+    });
+    seedRepository(harness.github);
+
+    await harness.deliverPullRequest();
+
+    const body = harness.github.soleCommentBody;
+    expect(criterionRows(body)).toHaveLength(1);
+    expect(body).toContain(
+      "1 acceptance criterion could not be judged from this diff",
+    );
   });
 
   test("reports one verdict when the producer proposes twice for one criterion", async () => {

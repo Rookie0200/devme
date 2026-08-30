@@ -111,10 +111,18 @@ Flow: GitHub webhook → signature verify → enqueue → worker → `runReview`
   anything unrecognised is `internal`. Do not guess `provider_auth`: it drives a dashboard warning
   accusing the customer's credential. `costUsd` of `null` means unknown and is deliberately not `0`.
 - **Producers propose; they never publish.** `verifier/verify.ts` is the only path to a pull request.
-  It re-checks each proposal against evidence it can independently locate, drops anything stylistic
-  outright, and caps the report at ten items. Grounding is deliberately **asymmetric**: `unsatisfied`
-  and `unclear` verdicts and all Findings are checked hard, `satisfied` passes cheaply — a false
-  accusation costs more trust than a miss.
+  It re-checks each proposal against evidence it can independently locate and drops anything
+  stylistic outright. Grounding is deliberately **asymmetric**: `unsatisfied` and `unclear` verdicts
+  and all Findings are checked hard, `satisfied` passes cheaply — a false accusation costs more trust
+  than a miss.
+- **Criteria and Findings do not share a budget** (`docs/adr/0007`). Criteria are uncapped;
+  `MAX_REPORTED_FINDINGS` caps Findings alone. A criterion with no verdict is a gap in the contract,
+  a Finding that missed the cut is an opinion withheld — ranking them against each other let the
+  model's chattiness decide how much of the spec got judged. Both lists come out in Producer order;
+  there is deliberately no ranking pass left. A report that still omits criteria **states the
+  count**, from the same helper the Check Run summary uses, so the two surfaces cannot disagree. One
+  verdict per criterion, de-duplicated *after* grounding so a duplicate cannot cost a criterion its
+  verdict.
 - **Model calls**: only the Producer and Verifier spend the Installation's Provider Key. Indexing
   stays on the platform's cheap Groq + HuggingFace pipeline.
 
@@ -129,7 +137,12 @@ failed Run, `Review.title`, and `lastAuthFailureAt` are all rows, and rows are w
 not assert on. What *is* covered is the behaviour those changes can break from the outside: a
 declined commit still being reviewable after its Issue link is added, an Unlinked branch not being
 nagged on every push, and an abandoned Run being taken over while a live one is not. All live at the
-webhook seam. The takeover cases need a `running` Run, which the seam cannot produce — the pipeline's
+webhook seam. `InMemoryReviewStore` also enforces the unique constraint on
+`(reviewRunId, criterionId)`, because a fake that accepts a payload Postgres rejects made duplicate
+criterion results structurally unreachable — the obvious test passed before the fix existed. Teaching
+a fake a constraint the real store has is not the same as asserting on rows, and the assertion is
+still on the comment. It proves the de-duplication and nothing about `PrismaReviewStore`.
+The takeover cases need a `running` Run, which the seam cannot produce — the pipeline's
 catch block always writes `failed` — so the harness seeds one. Seeding is *arrange*; the assertions
 are still only on the comment that left the system, and the negative control is what stops all of it
 being satisfied by a guard that simply stopped blocking. The rest was verified against a real
