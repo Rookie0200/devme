@@ -24,3 +24,12 @@ Raising the shared cap was rejected — it moves the arbitrary line without addr
 The change is covered from the webhook seam, including a negative control: a Run carrying twelve criteria *and* eight findings. Criteria alone cannot distinguish separate budgets from a large shared one, so the both-kinds case is the only one that fails if the budgets are ever re-merged. That was verified by simulating the regression, not assumed.
 
 Everything here is rendering, which the suite can see. Unlike `docs/adr/0005`, no part of this decision is invisible to it.
+
+One thing was not: the suite drives `InMemoryReviewStore`, so no test had ever asked `PrismaReviewStore` to write more than ten `CriterionResult` rows in a single `completeRun` transaction. Ten was the most any Run could previously produce, and uncapping criteria is precisely a change to how many rows land at once.
+
+Closed live on 2026-08-30. Issue #22 extracted **14** Acceptance Criteria; the Run at head `ebdf607` on pull request #23 (`597f527c`) completed with **14 criterion results persisted** and cost `$0.015793`. Under the shared cap that Run would have reported ten items and disclosed nothing about the remaining four.
+
+Two limits worth stating, because the run was cleaner than the change deserved:
+
+- **It raised no Findings at all.** So the live evidence covers the uncapped write and not the separation of budgets — the case where both kinds compete is still only the seam test's negative control. That is the assertion most worth having live, and it is the one still outstanding.
+- **Nothing went unjudged**, all fourteen verdicts being grounded, so the disclosure line did not render. The count is exercised by the suite and has not been seen in production.
