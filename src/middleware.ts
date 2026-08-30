@@ -8,7 +8,7 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   const isPublicRoute =
-    ['/', '/sign-in', '/sign-up'].includes(pathname) ||
+    ['/', '/sign-in'].includes(pathname) ||
     pathname.startsWith('/api/auth') ||
     // GitHub sends no session cookie. This endpoint authenticates itself by
     // HMAC signature against the shared secret, verified before it does
