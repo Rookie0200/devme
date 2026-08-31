@@ -38,9 +38,16 @@ echo "[$(date -uIs)] dumping to s3://${R2_BUCKET}/${key}"
 
 cd "$APP_DIR"
 
+# docker-compose.yml lives in $APP_DIR, but the .env it interpolates
+# (POSTGRES_PASSWORD, TUNNEL_TOKEN, ...) lives one level up at $ENV_FILE.
+# Compose only auto-loads a .env from the current directory, so every
+# invocation here needs --env-file explicitly or it fails before touching
+# postgres at all.
+dc() { docker compose --env-file "$ENV_FILE" "$@"; }
+
 # -T: no TTY, this is a pipe. --clean --if-exists so the dump can be restored
 # over an existing database without hand-editing it first.
-docker compose exec -T postgres \
+dc exec -T postgres \
   pg_dump --username=devme --dbname=devme --clean --if-exists \
   | gzip -9 \
   | docker run --rm -i \

@@ -36,6 +36,13 @@ set -a; . "$ENV_FILE"; set +a
 
 cd "$APP_DIR"
 
+# docker-compose.yml lives in $APP_DIR, but the .env it interpolates
+# (POSTGRES_PASSWORD, TUNNEL_TOKEN, ...) lives one level up at $ENV_FILE.
+# Compose only auto-loads a .env from the current directory, so every
+# invocation here needs --env-file explicitly or it fails before touching
+# postgres at all.
+dc() { docker compose --env-file "$ENV_FILE" "$@"; }
+
 aws_cli() {
   docker run --rm -i \
     -e AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
@@ -45,12 +52,12 @@ aws_cli() {
 }
 
 psql_scratch() {
-  docker compose exec -T postgres psql --username=devme --dbname="$SCRATCH_DB" -tAc "$1"
+  dc exec -T postgres psql --username=devme --dbname="$SCRATCH_DB" -tAc "$1"
 }
 
 cleanup() {
   echo "▸ dropping ${SCRATCH_DB}"
-  docker compose exec -T postgres \
+  dc exec -T postgres \
     psql --username=devme --dbname=postgres -q \
     -c "DROP DATABASE IF EXISTS ${SCRATCH_DB} WITH (FORCE);" >/dev/null 2>&1 || true
 }
@@ -66,7 +73,7 @@ echo "  ${latest}"
 
 echo "▸ creating ${SCRATCH_DB}"
 cleanup
-docker compose exec -T postgres \
+dc exec -T postgres \
   psql --username=devme --dbname=postgres -q -c "CREATE DATABASE ${SCRATCH_DB};"
 
 echo "▸ restoring"
@@ -75,7 +82,7 @@ echo "▸ restoring"
 # are what decide whether the restore worked — not psql's exit code.
 aws_cli s3 cp "s3://${R2_BUCKET}/${latest}" - \
   | gunzip \
-  | docker compose exec -T postgres psql --username=devme --dbname="$SCRATCH_DB" -q 2>&1 \
+  | dc exec -T postgres psql --username=devme --dbname="$SCRATCH_DB" -q 2>&1 \
   | grep -vE 'does not exist, skipping|NOTICE' || true
 
 failures=0

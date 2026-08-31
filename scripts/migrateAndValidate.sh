@@ -22,7 +22,10 @@ echo "▸ validating environment against src/env.js"
 bun -e 'await import("/app/src/env.js"); console.log("  env OK")'
 
 echo "▸ applying migrations (prisma migrate deploy)"
-bunx prisma migrate deploy
+# `bun x`, not `bunx` — the Dockerfile copies only the `bun` binary out of the
+# oven/bun image, not the separate `bunx` symlink, so `bunx` doesn't exist in
+# the runtime image. `bun x` is the same thing built into the one binary.
+bun x prisma migrate deploy
 
 # The HNSW index cannot be expressed in the Prisma schema, because the column
 # it covers is `Unsupported("vector(768)")`. It is created by raw SQL in
@@ -31,7 +34,7 @@ bunx prisma migrate deploy
 # silently degrades to a sequential scan — no error, just a slow reviewer with
 # worse context. Checked on every deploy because the failure is invisible.
 echo "▸ checking the HNSW index survived"
-bunx prisma db execute --stdin <<'SQL' >/dev/null
+bun x prisma db execute --stdin <<'SQL' >/dev/null
 DO $$
 BEGIN
   IF NOT EXISTS (
