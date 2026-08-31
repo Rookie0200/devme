@@ -1,14 +1,18 @@
 import { PrismaClient } from "@prisma/client";
 
+// No `datasources` override here: prisma/schema.prisma already reads
+// DATABASE_URL via env("DATABASE_URL"), which resolves lazily. An explicit
+// `datasources: { db: { url: process.env.DATABASE_URL } }` duplicates that
+// but evaluates eagerly and passes `undefined` when the var isn't set yet —
+// which is exactly what `next build` does while collecting page data inside
+// the Docker build stage (SKIP_ENV_VALIDATION=1 is set there, DATABASE_URL is
+// not). Prisma's constructor validates an explicit override strictly and
+// throws PrismaClientConstructorValidationError; omitting the override keeps
+// resolution lazy, so the build doesn't need a real database to succeed.
 const createPrismaClient = () =>
   new PrismaClient({
     log:
       process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-    datasources: {
-      db: {
-        url: process.env.DATABASE_URL,
-      },
-    },
   });
 
 const globalForPrisma = globalThis as unknown as {

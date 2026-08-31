@@ -2,20 +2,30 @@ import Groq from "groq-sdk";
 import { Document } from "@langchain/core/documents";
 import { HfInference } from "@huggingface/inference";
 
-if (!process.env.GROQ_API_KEY) {
-  throw new Error("GROQ_API_KEY is not provided");
+// Lazily constructed, like githubApp() in server/review/github/appClient.ts:
+// this module is imported by the /dashboard page tree, so throwing here at
+// module scope means `next build` fails without GROQ_API_KEY and HF_TOKEN set
+// — which the Docker build stage never has (only SKIP_ENV_VALIDATION=1 is).
+// Deferring the check to first actual use keeps the build key-free and still
+// fails loudly the moment indexing tries to call out without one.
+let hf: HfInference | undefined;
+function hfClient(): HfInference {
+  const hfToken = process.env.HF_TOKEN;
+  if (!hfToken) {
+    throw new Error("HF_TOKEN is required for HuggingFace API");
+  }
+  hf ??= new HfInference(hfToken);
+  return hf;
 }
 
-const hfToken = process.env.HF_TOKEN;
-if (!hfToken) {
-  throw new Error("HF_TOKEN is required for HuggingFace API");
+let groq: Groq | undefined;
+function groqClient(): Groq {
+  if (!process.env.GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY is not provided");
+  }
+  groq ??= new Groq({ apiKey: process.env.GROQ_API_KEY });
+  return groq;
 }
-
-const hf = new HfInference(hfToken);
-
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
 
 // Groq retires hosted models, and a stale default fails as a 404
 // `model_not_found` on every call — which the indexing path swallows per file,
@@ -60,7 +70,7 @@ export const summariseCode = async (doc: Document): Promise<string> => {
   const code = doc.pageContent.slice(0, 800);
 
   const res = await withRetry(() =>
-    groq.chat.completions.create({
+    groqClient().chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         {
@@ -94,7 +104,7 @@ export const aiSummarizeCommit = async (diff: string): Promise<string> => {
   const truncatedDiff = diff.slice(0, 4000);
 
   const res = await withRetry(() =>
-    groq.chat.completions.create({
+    groqClient().chat.completions.create({
       model: CHAT_MODEL,
       messages: [
         {
@@ -123,7 +133,7 @@ export async function generateEmbeddingsFromAi(
   // 768-dim output to satisfy the vector column expectation
   const model = "sentence-transformers/all-mpnet-base-v2";
   const res = await withRetry(() =>
-    hf.featureExtraction({
+    hfClient().featureExtraction({
       model,
       inputs: summary,
       options: {
