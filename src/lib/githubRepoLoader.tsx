@@ -49,8 +49,13 @@ export const generateEmbeddings = async (docs:Document[])=>{
         
         try {
             const summary = await summariseCode(doc);
+            if (!summary.trim()) {
+                console.error(`❌ Empty summary for ${doc.metadata.source}, skipping`);
+                results.push(null);
+                continue;
+            }
             const embedding = await generateEmbeddingsFromAi(summary);
-            
+
             results.push({
                 summary,
                 embedding,
@@ -66,6 +71,6 @@ export const generateEmbeddings = async (docs:Document[])=>{
             results.push(null);
         }
     }
-    
+
     return results.filter(Boolean);
 }

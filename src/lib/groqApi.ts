@@ -86,9 +86,10 @@ export const summariseCode = async (doc: Document): Promise<string> => {
       temperature: 0.2,
       // Headroom for a reasoning model. These spend the budget thinking before
       // emitting anything, so a tight cap returns an *empty* summary rather
-      // than a short one — and an empty summary still gets embedded, taking up
-      // an index slot while carrying no information. 80 words needs ~120; the
-      // rest is the reasoning the cap has to survive.
+      // than a short one. `generateEmbeddings` treats an empty summary as a
+      // failed file rather than embedding it, but the cap is still sized to
+      // avoid triggering that path routinely. 80 words needs ~120; the rest is
+      // the reasoning the cap has to survive.
       max_tokens: 400,
     })
   ) as GroqChatResponse;
