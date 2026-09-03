@@ -211,9 +211,13 @@ All AI calls go through **`src/lib/groqApi.ts`**: Groq for chat/summarization, H
 hard-coded in the Prisma schema as `Unsupported("vector(768)")` — changing the embedding model means
 a migration.
 
-Groq retires hosted models. A stale default 404s on every call, and because indexing swallows
-per-file failures the only symptom is an index that silently never fills. Override with
-`GROQ_CHAT_MODEL`.
+Groq retires hosted models, and a stale one 404s on every call. Every chat call goes through the
+`chat` helper in `groqApi.ts`, which classifies that 404 as `ChatModelUnavailableError` — the one
+failure that is about configuration rather than about the file being summarised. `generateEmbeddings`
+**stops the whole loop** on it rather than swallowing it per file, because it fails identically for
+every remaining file; that swallowing is what used to make a retired model look like an index that
+silently never fills. Override with `GROQ_CHAT_MODEL`; check
+https://console.groq.com/docs/models when it 404s.
 
 Indexing flow (`src/lib/githubRepoLoader.tsx`):
 1. `loadGithubRepo` — LangChain `GithubRepoLoader` pulls the repo. **`githubToken` is required and
