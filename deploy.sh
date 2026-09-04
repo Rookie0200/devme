@@ -63,14 +63,21 @@ git checkout --quiet "$BRANCH"
 git merge --ff-only "origin/${BRANCH}"
 echo "  now at $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
 
+# Every compose call needs --env-file. The environment lives at
+# $REMOTE_ROOT/.env, outside the checkout, so a bare `docker compose` finds no
+# .env beside docker-compose.yml and dies interpolating ${TUNNEL_TOKEN:?...}
+# before it can print anything — which reads as a failed deploy immediately
+# after a successful one. Same helper, for the same reason, as scripts/backup.sh.
+dc() { docker compose --env-file "${REMOTE_ROOT}/.env" "$@"; }
+
 echo "▸ building and starting"
 # The `migrate` service runs the deploy gate (env validation, migrations, the
 # HNSW index check) and web/worker wait for it to exit 0, so a bad env or a
 # failed migration stops here rather than serving.
-docker compose --env-file "${REMOTE_ROOT}/.env" up -d --build
+dc up -d --build
 
 echo "▸ state"
-docker compose ps
+dc ps
 
 echo "▸ pruning old images"
 docker image prune -f >/dev/null
@@ -78,4 +85,4 @@ REMOTE
 
 echo
 echo "✓ deployed. Recent worker output:"
-ssh "${user}@${host}" "cd ${REMOTE_APP} && docker compose logs --tail 20 worker"
+ssh "${user}@${host}" "cd ${REMOTE_APP} && docker compose --env-file ${REMOTE_ROOT}/.env logs --tail 20 worker"
