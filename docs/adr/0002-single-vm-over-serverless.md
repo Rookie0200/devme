@@ -76,3 +76,29 @@ same URL renders Next.js's own 404. Condition 6 is closed on the authenticated c
 What remains: condition 1 (a stranger's pull request, reviewed with the laptop closed) and condition 5
 (`scripts/inspectRuns.ts` showing that stranger's Run), both of which need an actual invited user rather
 than another rehearsal.
+
+## Verified live: the stranger's pull request
+
+**2026-09-05.** `Thebeast01` installed `claimcheck-app` on `nvim-config`, a repository `Rookie0200`
+cannot reach on GitHub, was handed a scoped Provider Key to paste into `/dashboard` for that
+Installation, opened Issue #1 stating one acceptance criterion, and opened PR #2 (`dbb39c3`) closing
+it. `claimcheck-app` commented with a per-criterion verdict — `README.md:5` satisfying "states that the
+leader key is the spacebar" — delivered by the production App on the box, with no laptop involved.
+Condition 1 is closed.
+
+`docker compose exec worker bun run scripts/inspectRuns.ts`, run on the box, then listed that Run —
+`Thebeast01/nvim-config #2`, completed, `$0.0018`, `claude-haiku-4-5` — grouped under Installation
+`159206683`, which a `Rookie0200`-authenticated dashboard session cannot see. That is the actual
+property condition 5 checks: the operator script's deliberate disregard for reachability, not merely
+that a row exists. Condition 5 is closed by the same command, on the Run condition 1's pull request
+produced.
+
+What this does not prove: the Provider Key on that Installation was scoped to this one test and revoked
+immediately after, by design, which is why the script now shows `no provider key` beside it — expected,
+not a regression. A second pull request against that Installation will decline with a missing-key
+reason until a key is pasted in again.
+
+**All six conditions of the live gate are closed.** The reviewer now has one Installation neither of us
+owns, reviewed without our laptop, restorable from an off-box backup, recoverable from a reboot, gated
+by CI on a machine that isn't a laptop, and visible to the operator script across Installations it
+cannot otherwise reach.
