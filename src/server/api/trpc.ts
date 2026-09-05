@@ -14,6 +14,8 @@ import { client } from "@/server/db";
 import { auth } from "@/auth";
 import type { GitHubIdentity } from "./githubIdentity";
 import { OctokitGitHubIdentity } from "./githubIdentity";
+import type { GitHubAppAdmin } from "./githubAppAdmin";
+import { OctokitGitHubAppAdmin } from "./githubAppAdmin";
 
 /**
  * One instance, so that its cache survives between requests. Tests construct
@@ -23,6 +25,9 @@ import { OctokitGitHubIdentity } from "./githubIdentity";
  * inferred concrete type would make it impossible to substitute a fake.
  */
 const githubIdentity: GitHubIdentity = new OctokitGitHubIdentity(client);
+
+/** Typed as the interface for the same reason as `githubIdentity` above. */
+const githubAppAdmin: GitHubAppAdmin = new OctokitGitHubAppAdmin();
 
 /**
  * 1. CONTEXT
@@ -43,6 +48,7 @@ export const createTRPCContext = async (opts: { headers: Headers }) => {
     client,
     session,
     github: githubIdentity,
+    githubApp: githubAppAdmin,
     ...opts,
   };
 };

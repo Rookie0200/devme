@@ -37,3 +37,32 @@ export const RUN_ABANDONED_AFTER_MS = 30 * 60 * 1000;
 export function isRunAbandoned(startedAt: Date, now: Date = new Date()): boolean {
   return now.getTime() - startedAt.getTime() > RUN_ABANDONED_AFTER_MS;
 }
+
+/**
+ * Whether the dashboard may *offer* a manual retry for this Run.
+ *
+ * Deliberately not the same predicate `ReviewStore.startRun` uses to decide
+ * whether an arriving delivery may take a Run over — that one also takes over
+ * a `running` Run when the queue itself reports a re-delivery
+ * (`previousAttemptAbandoned`), a signal only available to a job actually in
+ * flight, which a dashboard request never is. This predicate uses only the
+ * elapsed-time signal, which is strictly narrower: anything it calls
+ * retriable, `startRun` would also take over, so a retry button here can
+ * never trigger a redelivery that the pipeline then silently refuses.
+ *
+ * `completed` is excluded for the same reason it is absolute in `startRun` —
+ * the guard against charging a Provider Key twice for the same head commit.
+ * A user who disputes a completed verdict already has a free path: any new
+ * commit re-triggers a review at no dashboard cost.
+ */
+export function isRunManuallyRetriable(
+  status: "running" | "completed" | "failed" | "declined",
+  startedAt: Date,
+  now: Date = new Date(),
+): boolean {
+  return (
+    status === "failed" ||
+    status === "declined" ||
+    (status === "running" && isRunAbandoned(startedAt, now))
+  );
+}

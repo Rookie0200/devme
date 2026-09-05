@@ -176,6 +176,7 @@ export class PrismaReviewStore implements ReviewStore {
     reviewId: string;
     headSha: string;
     previousAttemptAbandoned: boolean;
+    githubDeliveryId: string | null;
   }): Promise<ReviewRunRecord | null> {
     // The unique constraint on (reviewId, headSha) is the duplicate-delivery
     // guard: two concurrent deliveries race here and exactly one wins.
@@ -236,6 +237,9 @@ export class PrismaReviewStore implements ReviewStore {
           costUsd: null,
           startedAt: new Date(),
           completedAt: null,
+          // Refreshed on takeover: a manual retry should redeliver whichever
+          // delivery most recently owns this Run, not an earlier one.
+          githubDeliveryId: input.githubDeliveryId,
         },
       });
       return { id: existing.id, headSha: input.headSha };
@@ -243,7 +247,11 @@ export class PrismaReviewStore implements ReviewStore {
 
     try {
       const run = await client.reviewRun.create({
-        data: { reviewId: input.reviewId, headSha: input.headSha },
+        data: {
+          reviewId: input.reviewId,
+          headSha: input.headSha,
+          githubDeliveryId: input.githubDeliveryId,
+        },
       });
       return { id: run.id, headSha: run.headSha };
     } catch (error) {

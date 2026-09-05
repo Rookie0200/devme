@@ -166,6 +166,14 @@ export interface ReviewJob {
   pullRequestTitle: string;
   headSha: string;
   pullRequestBody: string;
+  /**
+   * The `X-GitHub-Delivery` id of the webhook delivery that produced this
+   * job. Null only for a delivery that genuinely lacked the header — real
+   * GitHub deliveries always carry one. Stored against the Run so a manual
+   * retry from the dashboard can ask GitHub to redeliver the same event
+   * rather than fabricating a job from possibly-stale dashboard state.
+   */
+  githubDeliveryId: string | null;
 }
 
 /**
@@ -371,6 +379,8 @@ export interface ReviewStore {
     headSha: string;
     /** From `ReviewDelivery`, not from the job payload. */
     previousAttemptAbandoned: boolean;
+    /** From the job. Refreshed on takeover, so a retry always targets the delivery that most recently owns this Run. */
+    githubDeliveryId: string | null;
   }): Promise<ReviewRunRecord | null>;
 
   completeRun(input: PersistRunInput): Promise<void>;

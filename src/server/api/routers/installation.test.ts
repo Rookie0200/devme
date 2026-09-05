@@ -84,6 +84,11 @@ function caller(
   const trpc = createCaller({
     client: client as unknown as PrismaClient,
     github: fakeIdentity(reachable),
+    // Unused by this router; present only because the context type requires it.
+    githubApp: {
+      redeliverWebhook: () =>
+        Promise.reject(new Error("not used by installation.ts")),
+    },
     session,
     headers: new Headers(),
   });

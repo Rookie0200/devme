@@ -44,6 +44,71 @@ export async function mintInstallationToken(
   return data.token;
 }
 
+/**
+ * How far back to look for a delivery's numeric id before giving up.
+ *
+ * GitHub itself only retains a limited, recent window of deliveries — a
+ * match beyond this many of the App's most recent deliveries (across every
+ * Installation, not just the one being retried) is not findable regardless
+ * of how far the search goes.
+ */
+const DELIVERY_LOOKUP_PAGES = 5;
+
+/**
+ * The redelivery endpoint takes a delivery's integer `id`, which the original
+ * webhook request never carries — it only carries the `guid`, matching
+ * `X-GitHub-Delivery`, and that is all `ReviewRun.githubDeliveryId` stores.
+ * The only bridge from one to the other is listing recent deliveries and
+ * matching by guid.
+ *
+ * `null` when no match is found within the lookback window — either the
+ * delivery has aged out of GitHub's retention, or the guid never belonged to
+ * this App's webhook at all.
+ */
+async function findDeliveryIdByGuid(guid: string): Promise<number | null> {
+  const iterator = githubApp().octokit.paginate.iterator(
+    "GET /app/hook/deliveries",
+    { per_page: 100 },
+  );
+
+  let pages = 0;
+  for await (const { data } of iterator) {
+    const match = data.find((delivery) => delivery.guid === guid);
+    if (match) return match.id;
+    pages += 1;
+    if (pages >= DELIVERY_LOOKUP_PAGES) return null;
+  }
+  return null;
+}
+
+/**
+ * Asks GitHub to redeliver a past webhook delivery.
+ *
+ * Authenticated as the App itself (the App's own JWT), not as an
+ * Installation — this is an App-level administrative action, unrelated to any
+ * one Installation's grant. It resends the exact bytes GitHub originally
+ * sent, through the same webhook route and signature check, so it needs no
+ * pipeline logic of its own: a redelivery is already a first-class case
+ * `ReviewStore.startRun` is built to expect.
+ *
+ * @throws Error if the delivery cannot be found (aged out of GitHub's
+ * retention window) or GitHub refuses the redelivery itself.
+ */
+export async function redeliverWebhookDelivery(
+  deliveryGuid: string,
+): Promise<void> {
+  const deliveryId = await findDeliveryIdByGuid(deliveryGuid);
+  if (deliveryId === null) {
+    throw new Error(
+      "This delivery is no longer available from GitHub to redeliver.",
+    );
+  }
+  await githubApp().octokit.request(
+    "POST /app/hook/deliveries/{delivery_id}/attempts",
+    { delivery_id: deliveryId },
+  );
+}
+
 export class OctokitGitHubClient implements GitHubClient {
   constructor(private readonly octokit: InstallationOctokit) {}
 

@@ -92,6 +92,7 @@ export async function handleGithubWebhook(
       pullRequestTitle: pull_request.title,
       headSha: pull_request.head.sha,
       pullRequestBody: pull_request.body ?? "",
+      githubDeliveryId: request.headers.get("x-github-delivery"),
     });
 
     return new Response("queued", { status: 202 });

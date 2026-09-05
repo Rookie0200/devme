@@ -21,6 +21,7 @@ interface StoredRun {
   costUsd: number | null;
   startedAt: Date;
   results: StoredCriterionResult[];
+  githubDeliveryId: string | null;
 }
 
 /**
@@ -164,6 +165,7 @@ export class InMemoryReviewStore implements ReviewStore {
     reviewId: string;
     headSha: string;
     previousAttemptAbandoned: boolean;
+    githubDeliveryId: string | null;
   }): Promise<ReviewRunRecord | null> {
     const existing = this.runs.find(
       (run) => run.reviewId === input.reviewId && run.headSha === input.headSha,
@@ -184,6 +186,7 @@ export class InMemoryReviewStore implements ReviewStore {
       existing.costUsd = null;
       existing.startedAt = new Date();
       existing.results = [];
+      existing.githubDeliveryId = input.githubDeliveryId;
       return Promise.resolve({ id: existing.id, headSha: existing.headSha });
     }
 
@@ -196,6 +199,7 @@ export class InMemoryReviewStore implements ReviewStore {
       costUsd: null,
       startedAt: new Date(),
       results: [],
+      githubDeliveryId: input.githubDeliveryId,
     };
     this.runs.push(run);
     return Promise.resolve({ id: run.id, headSha: run.headSha });
@@ -224,6 +228,7 @@ export class InMemoryReviewStore implements ReviewStore {
       costUsd: null,
       startedAt: input.startedAt ?? new Date(),
       results: [],
+      githubDeliveryId: null,
     };
     this.runs.push(run);
     return run.id;

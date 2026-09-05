@@ -84,6 +84,7 @@ export async function runReview(
     // Passed straight through. The pipeline does not interpret it and does not
     // know what the queue counted to reach it.
     previousAttemptAbandoned: delivery.previousAttemptAbandoned,
+    githubDeliveryId: job.githubDeliveryId,
   });
   // This head commit has already been evaluated. Returning here is what stops
   // a GitHub redelivery charging the customer's Provider Key twice. Neither a

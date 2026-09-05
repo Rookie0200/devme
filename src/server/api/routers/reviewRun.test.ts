@@ -117,6 +117,11 @@ function caller(
   return createCaller({
     client: stubClient() as unknown as PrismaClient,
     github: fakeIdentity(reachable),
+    // Unused by `list`; present only because the context type requires it.
+    githubApp: {
+      redeliverWebhook: () =>
+        Promise.reject(new Error("not used by reviewRun.list")),
+    },
     session,
     headers: new Headers(),
   });
@@ -172,5 +177,128 @@ describe("a signed-out caller", () => {
     }
 
     expect(code).toBe("UNAUTHORIZED");
+  });
+});
+
+/**
+ * A second router authorization property, same narrow style as the feed
+ * above: retrying a Run from an Installation the user cannot reach must
+ * answer `NOT_FOUND`, identically to a Run that does not exist, and must
+ * never reach GitHub. The alternative failure mode — quietly redelivering a
+ * stranger's webhook because only the Run id was checked — would raise no
+ * error and touch a real Installation's App integration from another
+ * tenant's dashboard.
+ */
+function retryRow(overrides: {
+  status?: "running" | "completed" | "failed" | "declined";
+  startedAt?: Date;
+  githubDeliveryId?: string | null;
+  githubInstallationId?: number;
+}) {
+  return {
+    status: overrides.status ?? "failed",
+    startedAt: overrides.startedAt ?? new Date(),
+    githubDeliveryId: overrides.githubDeliveryId ?? "delivery-1",
+    review: {
+      repository: {
+        installation: {
+          githubInstallationId: overrides.githubInstallationId ?? MINE,
+        },
+      },
+    },
+  };
+}
+
+function stubClientWithRun(row: ReturnType<typeof retryRow> | null) {
+  return {
+    reviewRun: {
+      findUnique() {
+        return Promise.resolve(row);
+      },
+    },
+  };
+}
+
+function fakeGithubApp() {
+  const calls: string[] = [];
+  return {
+    calls,
+    redeliverWebhook(deliveryId: string) {
+      calls.push(deliveryId);
+      return Promise.resolve();
+    },
+  };
+}
+
+function retryCaller(
+  reachable: number[],
+  client: unknown,
+  githubApp: ReturnType<typeof fakeGithubApp>,
+) {
+  return createCaller({
+    client: client as PrismaClient,
+    github: fakeIdentity(reachable),
+    githubApp,
+    session: { user: { id: USER_ID }, expires: "2099-01-01T00:00:00.000Z" },
+    headers: new Headers(),
+  });
+}
+
+describe("retrying a Run", () => {
+  test("answers NOT_FOUND, and never reaches GitHub, for a Run from an Installation the user cannot reach", async () => {
+    const githubApp = fakeGithubApp();
+    const trpc = retryCaller(
+      [],
+      stubClientWithRun(retryRow({ githubInstallationId: THEIRS })),
+      githubApp,
+    );
+
+    let code: string | null = null;
+    try {
+      await trpc.reviewRun.rerun({ id: "run-1" });
+    } catch (error) {
+      code = error instanceof TRPCError ? error.code : null;
+    }
+
+    expect(code).toBe("NOT_FOUND");
+    expect(githubApp.calls).toEqual([]);
+  });
+
+  /**
+   * The positive control. Without it, the test above would still pass if
+   * `rerun` refused every retry, reachable or not.
+   */
+  test("redelivers the Run's stored delivery when the user can reach it", async () => {
+    const githubApp = fakeGithubApp();
+    const trpc = retryCaller(
+      [MINE],
+      stubClientWithRun(
+        retryRow({ githubInstallationId: MINE, githubDeliveryId: "delivery-42" }),
+      ),
+      githubApp,
+    );
+
+    await trpc.reviewRun.rerun({ id: "run-1" });
+
+    expect(githubApp.calls).toEqual(["delivery-42"]);
+  });
+
+  test("refuses a completed Run without reaching GitHub", async () => {
+    const githubApp = fakeGithubApp();
+    const trpc = retryCaller(
+      [MINE],
+      stubClientWithRun(retryRow({ status: "completed" })),
+      githubApp,
+    );
+
+    let code: string | null = null;
+    try {
+      await trpc.reviewRun.rerun({ id: "run-1" });
+    } catch (error) {
+      code = error instanceof TRPCError ? error.code : null;
+    }
+
+    expect(code).toBe("BAD_REQUEST");
+    expect(githubApp.calls).toEqual([]);
   });
 });

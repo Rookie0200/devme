@@ -8,10 +8,11 @@ import { ReconnectGitHub } from "../../reconnect-github";
 /**
  * Review Run history: whether the reviewer ran, and if not, why.
  *
- * A plain server component. The Installation screen is a client component
- * because it mutates and invalidates; there is nothing to mutate here, so
- * there is no cache to hydrate and no hook to run. `loading.tsx` supplies the
- * streamed skeleton.
+ * A server component that fetches once and hands the result to `Runs`, a
+ * client component, as `initialData` — the same split the Installation
+ * screen uses. `Runs` needs to be a client component because retrying a Run
+ * that never finished is a mutation with something to invalidate.
+ * `loading.tsx` supplies the streamed skeleton for the server-side fetch.
  *
  * The revoked-authorization case is caught here rather than left to an error
  * boundary, for the same reason the Installation screen catches it: a boundary
@@ -46,9 +47,7 @@ export default async function RunsPage({
     <Runs
       feed={feed}
       installUrl={`https://github.com/apps/${env.GITHUB_APP_SLUG}/installations/new`}
-      // Naming the account on every row is noise when there is only one it
-      // could be — and under a filter there is only one it could be.
-      showAccount={feed.installationCount > 1 && feed.filter === null}
+      installation={installation}
     />
   );
 }

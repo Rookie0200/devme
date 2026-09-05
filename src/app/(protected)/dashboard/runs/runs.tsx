@@ -1,6 +1,9 @@
-import Link from "next/link";
+"use client";
 
-import type { RouterOutputs } from "@/trpc/react";
+import Link from "next/link";
+import { toast } from "sonner";
+
+import { api, type RouterOutputs } from "@/trpc/react";
 import { Button } from "@/components/ui/button";
 
 type Feed = RouterOutputs["reviewRun"]["list"];
@@ -66,27 +69,40 @@ function label(run: Run): { text: string; tone: string } {
 export function Runs({
   feed,
   installUrl,
-  showAccount,
+  installation,
 }: {
   feed: Feed;
   installUrl: string;
-  showAccount: boolean;
+  /** The `?installation=` query param, so a retry can refetch the same view. */
+  installation: string | undefined;
 }) {
-  if (feed.installationCount === 0) return <NoInstallations installUrl={installUrl} />;
+  // A client query seeded with the server render, exactly like the
+  // Installation screen: retrying a Run needs a mutation and something for it
+  // to invalidate, so this screen is no longer read-only.
+  const { data } = api.reviewRun.list.useQuery(
+    { installation },
+    { initialData: feed },
+  );
+
+  if (data.installationCount === 0) return <NoInstallations installUrl={installUrl} />;
+
+  // Naming the account on every row is noise when there is only one it could
+  // be — and under a filter there is only one it could be.
+  const showAccount = data.installationCount > 1 && data.filter === null;
 
   return (
     <div className="flex flex-col gap-3">
       {/* Above the list, and rendered even when the list is empty: a filtered
           feed showing nothing is indistinguishable from a reviewer that never
           ran, unless the narrowing is stated where the reader is looking. */}
-      {feed.filter && <FilterNotice filter={feed.filter} />}
+      {data.filter && <FilterNotice filter={data.filter} />}
 
-      {feed.runs.length === 0 ? (
-        <NoRuns filtered={feed.filter !== null} />
+      {data.runs.length === 0 ? (
+        <NoRuns filtered={data.filter !== null} />
       ) : (
         <>
           <ul className="flex flex-col divide-y">
-            {feed.runs.map((run) => (
+            {data.runs.map((run) => (
               <RunRow key={run.id} run={run} showAccount={showAccount} />
             ))}
           </ul>
@@ -94,9 +110,9 @@ export function Runs({
           {/* Stated rather than silently truncated: a capped list that presents
               itself as complete lets a reader conclude older Runs never happened.
               The cap is the router's, so it binds a filtered feed identically. */}
-          {feed.runs.length === feed.limit && (
+          {data.runs.length === data.limit && (
             <p className="text-muted-foreground text-xs">
-              Showing the {feed.limit} most recent runs.
+              Showing the {data.limit} most recent runs.
             </p>
           )}
         </>
@@ -128,6 +144,18 @@ function FilterNotice({ filter }: { filter: Filter }) {
 
 function RunRow({ run, showAccount }: { run: Run; showAccount: boolean }) {
   const { text, tone } = label(run);
+  const utils = api.useUtils();
+
+  // Never offered for a `completed` Run — that guard is `isRunManuallyRetriable`
+  // on the server, not this flag; the flag only decides whether to show the
+  // button, the router still refuses the mutation on its own.
+  const rerun = api.reviewRun.rerun.useMutation({
+    onSuccess: async () => {
+      toast.success("Asked GitHub to redeliver this run.");
+      await utils.reviewRun.list.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
 
   return (
     <li className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-3">
@@ -145,6 +173,17 @@ function RunRow({ run, showAccount }: { run: Run; showAccount: boolean }) {
       </span>
 
       <span className={`ml-auto text-sm font-medium ${tone}`}>{text}</span>
+
+      {run.retriable && (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={rerun.isPending}
+          onClick={() => rerun.mutate({ id: run.id })}
+        >
+          {rerun.isPending ? "Retrying…" : "Retry"}
+        </Button>
+      )}
 
       <span className="text-muted-foreground w-full text-xs">
         {DATE.format(run.startedAt)}

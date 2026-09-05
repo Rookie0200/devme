@@ -1,7 +1,11 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
-import { isRunAbandoned } from "@/server/review/runLifecycle";
+import {
+  isRunAbandoned,
+  isRunManuallyRetriable,
+} from "@/server/review/runLifecycle";
 
 /**
  * Review Run history.
@@ -191,8 +195,80 @@ export const reviewRunRouter = createTRPCRouter({
           url: `https://github.com/${repository.owner}/${repository.name}/pull/${row.review.pullRequestNumber}`,
           interrupted:
             row.status === "running" && isRunAbandoned(row.startedAt, now),
+          retriable: isRunManuallyRetriable(row.status, row.startedAt, now),
         };
       }),
     };
   }),
+
+  /**
+   * Retries a Run that never finished, by asking GitHub to redeliver the
+   * webhook event that produced it.
+   *
+   * **Never touches a `completed` Run** — `isRunManuallyRetriable` excludes
+   * it, which mirrors the absolute guard in `ReviewStore.startRun` against
+   * charging a Provider Key twice for the same head commit. This check is a
+   * courtesy, not the real guard: even if it were skipped, the redelivered
+   * webhook would hit `startRun` again and be refused there. Its job is only
+   * to avoid a pointless GitHub call and a "nothing happened" click.
+   *
+   * Authorization mirrors `list`: an Installation this user cannot reach
+   * answers `NOT_FOUND`, the same as a Run that does not exist at all, so a
+   * stranger's Run id leaks nothing by the shape of the error it gets back.
+   */
+  rerun: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const run = await ctx.client.reviewRun.findUnique({
+        where: { id: input.id },
+        select: {
+          status: true,
+          startedAt: true,
+          githubDeliveryId: true,
+          review: {
+            select: {
+              repository: {
+                select: {
+                  installation: { select: { githubInstallationId: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!run) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+
+      const reachable = await ctx.github.reachableInstallations(ctx.user.id);
+      const owner = BigInt(
+        run.review.repository.installation.githubInstallationId,
+      );
+      const isReachable = reachable.some(
+        (installation) => BigInt(installation.githubInstallationId) === owner,
+      );
+      // Same response as a Run that does not exist — confirming that a real
+      // Run sits behind an id the caller cannot reach is exactly the leak
+      // `installation.test.ts` and `reviewRun.test.ts` both exist to prevent.
+      if (!isReachable) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+
+      if (!isRunManuallyRetriable(run.status, run.startedAt)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "This run already completed and cannot be retried.",
+        });
+      }
+
+      if (!run.githubDeliveryId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "This run predates retry support and cannot be redelivered automatically — push a new commit instead.",
+        });
+      }
+
+      await ctx.githubApp.redeliverWebhook(run.githubDeliveryId);
+    }),
 });

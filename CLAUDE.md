@@ -25,8 +25,8 @@ bun run db:studio      # prisma studio
 Tests are `bun test`, no extra dependency. The review suite lives at
 `src/server/review/review.test.ts` and enters at **one seam**: the GitHub webhook handler. Separately,
 `routers/installation.test.ts` and `routers/reviewRun.test.ts` are *router authorization tests* —
-each pins exactly one security property and nothing else. See "The review pipeline" below before
-adding to any of them.
+each pins one narrow security property per procedure and nothing else. See "The review pipeline"
+below before adding to any of them.
 
 `bun run check` sets `SKIP_ENV_VALIDATION=1` for both lint and the tests, so the gate needs no
 secrets — the router tests import `@/env` transitively and would otherwise fail on any `.env`
@@ -77,7 +77,10 @@ terms" section, which now lists things genuinely absent rather than merely depre
 - `/dashboard/runs` is the Review Run feed: the 50 most recent Runs across every reachable
   Installation, newest first, one row per Run, capped rather than paginated and saying so.
   `?installation=<id>` narrows it to one Installation — a query param rather than a control, per
-  ADR-0006, applied in the router before `take` so the cap can't hide a Run the filter kept.
+  ADR-0006, applied in the router before `take` so the cap can't hide a Run the filter kept. A Run
+  that never finished (`declined`, `failed`, or a `running` one old enough to be presumed dead) can be
+  retried from a button on its row — see "Retrying a Run" below. A `completed` Run cannot; the screen
+  is a client component for this one mutation, seeded with the server-rendered feed as `initialData`.
 
 **GitHub owns "what the review said"; the dashboard owns "whether it ran, and why it didn't."** The
 pull request comment is the only rendering of verdicts, Criterion Results, Findings, and Evidence.
@@ -88,6 +91,22 @@ conclude*.
 
 Still deliberately absent, each needing a new query or router: pagination, cost totals of any kind,
 and a cross-Installation operator view.
+
+**Retrying a Run** (`reviewRun.rerun`) never touches a `completed` Run — `isRunManuallyRetriable` in
+`runLifecycle.ts` excludes it deliberately, mirroring the absolute guard in `ReviewStore.startRun`
+against charging a Provider Key twice for the same head commit. It works by asking GitHub to
+redeliver the original webhook event (`POST /app/hook/deliveries/{id}/attempts`, App-JWT
+authenticated, via `redeliverWebhookDelivery` in `review/github/appClient.ts`), not by fabricating a
+fresh job from dashboard state — the redelivered event resends the exact bytes GitHub originally
+sent, through the same webhook route and signature check, so no pipeline logic had to be added for it.
+`ReviewRun.githubDeliveryId` stores the `X-GitHub-Delivery` guid, refreshed on takeover so a retry
+always targets whichever delivery most recently owns the Run; GitHub's redelivery endpoint wants a
+different, numeric id it never sends us, so `redeliverWebhookDelivery` first pages through
+`GET /app/hook/deliveries` (capped at 5 pages) to find the matching guid before redelivering — GitHub
+only retains a limited recent window regardless, so an old Run's delivery can be simply gone, and the
+mutation reports that rather than silently doing nothing. The router-side retriability check is a
+courtesy, not the real guard: skipping it would still dead-end at `startRun`, which is what actually
+protects a `completed` Run.
 
 ### The review pipeline
 
@@ -167,18 +186,27 @@ pull request; do not "fix" the gap by reaching into the fake store.
 
 Outside the pipeline there is a second **category** of test — *router authorization tests* — and it
 is deliberately not a general router suite. Each file drives one router through a server-side caller
-with a stub `ctx.client` and a fake `ctx.github`, and pins **one property**, chosen because it is a
-security property that fails *silently* and in a direction that looks like an improvement:
+with a stub `ctx.client` and fakes for `ctx.github`/`ctx.githubApp`, and pins one property per
+procedure it covers, chosen because each is a security property that fails *silently* and in a
+direction that looks like an improvement:
 
 - `installation.test.ts` — an Installation the signed-in user cannot reach answers `NOT_FOUND`, never
   `FORBIDDEN`, because `FORBIDDEN` confirms to a stranger that the Installation is real.
-- `reviewRun.test.ts` — a Review Run from an unreachable Installation is **absent from a non-empty
-  result**. Assert absence, not a thrown error: dropping the filter does not throw, it returns extra
-  rows, so an error-shaped assertion sails straight past the regression. In development it is
-  invisible, because a developer can usually reach every Installation in their own database.
+- `reviewRun.test.ts`, on `list` — a Review Run from an unreachable Installation is **absent from a
+  non-empty result**. Assert absence, not a thrown error: dropping the filter does not throw, it
+  returns extra rows, so an error-shaped assertion sails straight past the regression. In development
+  it is invisible, because a developer can usually reach every Installation in their own database.
+- `reviewRun.test.ts`, on `rerun` — a Run behind an unreachable Installation answers `NOT_FOUND`, the
+  same shape as one that does not exist, **and the fake `ctx.githubApp` records no call**. The
+  property is one file drives one router, not one file per property: both belong to `reviewRun.ts`
+  and share its fakes, so they stay in the same file rather than forcing a split by procedure. Each
+  still carries its own positive control — a reachable Run's retry must actually reach the fake, or
+  the negative case would pass by refusing everything.
 
-Adding a third means finding another property of that kind, not testing a happy path. Happy paths are
-verified by hand against a real Installation.
+A new property belonging to an existing router's file joins that file, next to the property it
+shares a router with. A new router gets its own file. Either way, find another property of the same
+kind — a security property that fails *silently* and in a direction that looks like an improvement —
+not a happy path. Happy paths are verified by hand against a real Installation.
 
 Be clear about what these seams do **not** prove. They run against hand-written stubs for
 `ctx.client`, so they say nothing about whether the real Prisma queries are correct — the same blind
@@ -196,11 +224,14 @@ narrows `ctx.session` and adds `ctx.user`. `publicProcedure` carries a dev-only 
 `protectedProcedure` does not. Add new routers to `root.ts` manually.
 
 **Routers take their dependencies from `ctx`, never from a module import.** `createTRPCContext`
-supplies `client` (Prisma) and `github` (`GitHubIdentity`, which answers *which Installations this
-user can reach* against their own OAuth token). `github` is typed as the interface, not the concrete
-class, so a test can substitute a fake with no cast. Its reachability cache lives **inside** the
-implementation instance rather than at module scope — production shares one instance, and a test
-constructing its own therefore gets an empty cache instead of reading the previous case's answer.
+supplies `client` (Prisma), `github` (`GitHubIdentity`, which answers *which Installations this
+user can reach* against their own OAuth token), and `githubApp` (`GitHubAppAdmin`, App-level actions
+authenticated as the App's own JWT rather than any one Installation's token — currently just
+`redeliverWebhook`, behind `reviewRun.rerun`). Both are typed as the interface, not the concrete
+class, so a test can substitute a fake with no cast. `GitHubIdentity`'s reachability cache lives
+**inside** the implementation instance rather than at module scope — production shares one instance,
+and a test constructing its own therefore gets an empty cache instead of reading the previous case's
+answer.
 
 The review pipeline does **not** go through tRPC. It enters at the webhook route handler and runs
 entirely on the worker.

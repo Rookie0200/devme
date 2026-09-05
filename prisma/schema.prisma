@@ -183,6 +183,12 @@ model ReviewRun {
   /// against production. Same reasoning as `Finding.producer`.
   outcomeReason String?
 
+  /// The `X-GitHub-Delivery` id of the webhook delivery that most recently
+  /// owns this Run — set on creation and refreshed on takeover, so a manual
+  /// retry always redelivers the delivery GitHub would retry itself. Null on
+  /// rows that predate retry support.
+  githubDeliveryId String?
+
   review   Review            @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   results  CriterionResult[]
   findings Finding[]
