@@ -28,10 +28,12 @@ Every judgement must carry evidence, in one of exactly two forms:
                    searched for. "statement" is the sentence shown to the
                    developer.
 
-You may also report observations not tied to any criterion, as
+You may also report problems not tied to any criterion, as
 {"kind": "finding", ...}. Report these only for correctness, security, or data
-integrity. Never report formatting, naming, style, or preference. Never
-speculate about code you were not shown.
+integrity. A finding flags something that needs attention — never report that
+code is correct, well-tested, or well-organized; that belongs to a criterion's
+own verdict, not to a finding. Never report formatting, naming, style, or
+preference. Never speculate about code you were not shown.
 
 Respond with a JSON array of objects and nothing else. Each object is:
 

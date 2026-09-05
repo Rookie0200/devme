@@ -51,8 +51,13 @@ _Avoid_: `unclear` as the name for a criterion that got no verdict — `unclear`
 _Avoid_: Check, status, assessment
 
 **Finding**:
-An observation about a pull request that is not tied to an Acceptance Criterion, such as a security concern. Findings and Criterion Results are reported together but are judged by different rules — and are **not ranked against each other**, because a criterion is owed a verdict while a Finding is an opinion offered. See `docs/adr/0007`.
-_Avoid_: Issue, comment, violation, nitpick
+A problem with a pull request — correctness, security, or data integrity — that is not tied to an
+Acceptance Criterion. **Adverse by definition**: a Finding flags something that needs attention, not
+something that is already fine. Positive information about a criterion belongs to that criterion's
+own `satisfied` verdict, not to a Finding. Findings and Criterion Results are reported together but
+are judged by different rules — and are **not ranked against each other**, because a criterion is
+owed a verdict while a Finding is an opinion offered. See `docs/adr/0007`.
+_Avoid_: Issue, comment, violation, nitpick, praise, affirmation
 
 **Evidence**:
 The specific part of the diff or the codebase that justifies a Criterion Result or a Finding. A verdict without Evidence is discarded rather than reported.
