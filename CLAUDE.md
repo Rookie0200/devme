@@ -76,6 +76,8 @@ terms" section, which now lists things genuinely absent rather than merely depre
   Run, read from `ProviderKey.lastAuthFailureAt`. It still shows no Repository list.
 - `/dashboard/runs` is the Review Run feed: the 50 most recent Runs across every reachable
   Installation, newest first, one row per Run, capped rather than paginated and saying so.
+  `?installation=<id>` narrows it to one Installation — a query param rather than a control, per
+  ADR-0006, applied in the router before `take` so the cap can't hide a Run the filter kept.
 
 **GitHub owns "what the review said"; the dashboard owns "whether it ran, and why it didn't."** The
 pull request comment is the only rendering of verdicts, Criterion Results, Findings, and Evidence.
@@ -84,9 +86,8 @@ edge, and it is the standing answer to "why doesn't the dashboard show review re
 a new dashboard feature is whether it answers *did the reviewer run* rather than *what did it
 conclude*.
 
-Still deliberately absent, each needing a new query or router: pagination, filtering (the
-per-Installation filter should arrive as a query param on `/dashboard/runs`, not a control), cost
-totals of any kind, and a cross-Installation operator view.
+Still deliberately absent, each needing a new query or router: pagination, cost totals of any kind,
+and a cross-Installation operator view.
 
 ### The review pipeline
 
