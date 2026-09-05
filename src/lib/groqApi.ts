@@ -1,4 +1,4 @@
-import Groq from "groq-sdk";
+import Groq, { NotFoundError } from "groq-sdk";
 import { Document } from "@langchain/core/documents";
 import { HfInference } from "@huggingface/inference";
 
@@ -28,10 +28,32 @@ function groqClient(): Groq {
 }
 
 // Groq retires hosted models, and a stale default fails as a 404
-// `model_not_found` on every call — which the indexing path swallows per file,
-// so the only symptom is an index that silently never fills. Override with
-// GROQ_CHAT_MODEL; check https://console.groq.com/docs/models when this 404s.
+// `model_not_found` on every call. Override with GROQ_CHAT_MODEL; check
+// https://console.groq.com/docs/models when this 404s.
 const CHAT_MODEL = process.env.GROQ_CHAT_MODEL ?? "openai/gpt-oss-20b";
+
+/**
+ * A retired or misspelled chat model, distinguished from a per-file failure.
+ *
+ * The distinction is what a caller needs to know: every other failure is about
+ * one file and the next file may well succeed, but this one fails identically
+ * for every file in the repository. Callers that tolerate per-file failures
+ * must stop on this rather than swallow it — see `generateEmbeddings`.
+ *
+ * Groq's error shapes stay in this module, the same way the pipeline never
+ * learns one vendor's, so the indexing path can branch on a type it owns.
+ */
+export class ChatModelUnavailableError extends Error {
+  constructor(readonly model: string, cause: unknown) {
+    super(
+      `Groq rejected chat model "${model}" as unavailable. It has probably ` +
+        `been retired — set GROQ_CHAT_MODEL to a current one from ` +
+        `https://console.groq.com/docs/models`,
+      { cause },
+    );
+    this.name = "ChatModelUnavailableError";
+  }
+}
 
 // Retry config
 const MAX_RETRIES = 3;
@@ -61,6 +83,27 @@ interface GroqChatResponse {
   choices: Array<{ message?: { content?: string } }>;
 }
 
+async function chat(
+  messages: Array<{ role: "system" | "user"; content: string }>,
+  options: { temperature: number; max_tokens: number },
+): Promise<string> {
+  try {
+    const res = (await withRetry(() =>
+      groqClient().chat.completions.create({
+        model: CHAT_MODEL,
+        messages,
+        ...options,
+      }),
+    )) as GroqChatResponse;
+    return res.choices[0]?.message?.content?.trim() ?? "";
+  } catch (error) {
+    if (error instanceof NotFoundError) {
+      throw new ChatModelUnavailableError(CHAT_MODEL, error);
+    }
+    throw error;
+  }
+}
+
 /**
  * Summarize code for onboarding. Optimized prompt for minimal tokens.
  */
@@ -69,31 +112,29 @@ export const summariseCode = async (doc: Document): Promise<string> => {
   // Truncate to ~800 chars to save tokens; adjust if needed
   const code = doc.pageContent.slice(0, 800);
 
-  const res = await withRetry(() =>
-    groqClient().chat.completions.create({
-      model: CHAT_MODEL,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a senior engineer. Summarize code concisely for onboarding. Max 80 words. Focus on purpose and key logic.",
-        },
-        {
-          role: "user",
-          content: `File: ${filePath}\n\n\`\`\`\n${code}\n\`\`\``,
-        },
-      ],
+  return chat(
+    [
+      {
+        role: "system",
+        content:
+          "You are a senior engineer. Summarize code concisely for onboarding. Max 80 words. Focus on purpose and key logic.",
+      },
+      {
+        role: "user",
+        content: `File: ${filePath}\n\n\`\`\`\n${code}\n\`\`\``,
+      },
+    ],
+    {
       temperature: 0.2,
       // Headroom for a reasoning model. These spend the budget thinking before
       // emitting anything, so a tight cap returns an *empty* summary rather
-      // than a short one — and an empty summary still gets embedded, taking up
-      // an index slot while carrying no information. 80 words needs ~120; the
-      // rest is the reasoning the cap has to survive.
+      // than a short one. `generateEmbeddings` treats an empty summary as a
+      // failed file rather than embedding it, but the cap is still sized to
+      // avoid triggering that path routinely. 80 words needs ~120; the rest is
+      // the reasoning the cap has to survive.
       max_tokens: 400,
-    })
-  ) as GroqChatResponse;
-
-  return res.choices[0]?.message?.content?.trim() ?? "";
+    },
+  );
 };
 
 /**
@@ -103,26 +144,20 @@ export const aiSummarizeCommit = async (diff: string): Promise<string> => {
   // Cap diff size to avoid blowing token budget
   const truncatedDiff = diff.slice(0, 4000);
 
-  const res = await withRetry(() =>
-    groqClient().chat.completions.create({
-      model: CHAT_MODEL,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Summarize git diff as bullet points. Include [filename]. Be concise, max 5 bullets.",
-        },
-        {
-          role: "user",
-          content: truncatedDiff,
-        },
-      ],
-      temperature: 0.2,
-      max_tokens: 200,
-    })
-  ) as GroqChatResponse;
-
-  return res.choices[0]?.message?.content?.trim() ?? "";
+  return chat(
+    [
+      {
+        role: "system",
+        content:
+          "Summarize git diff as bullet points. Include [filename]. Be concise, max 5 bullets.",
+      },
+      {
+        role: "user",
+        content: truncatedDiff,
+      },
+    ],
+    { temperature: 0.2, max_tokens: 200 },
+  );
 };
 
 

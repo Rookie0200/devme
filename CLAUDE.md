@@ -211,9 +211,13 @@ All AI calls go through **`src/lib/groqApi.ts`**: Groq for chat/summarization, H
 hard-coded in the Prisma schema as `Unsupported("vector(768)")` — changing the embedding model means
 a migration.
 
-Groq retires hosted models. A stale default 404s on every call, and because indexing swallows
-per-file failures the only symptom is an index that silently never fills. Override with
-`GROQ_CHAT_MODEL`.
+Groq retires hosted models, and a stale one 404s on every call. Every chat call goes through the
+`chat` helper in `groqApi.ts`, which classifies that 404 as `ChatModelUnavailableError` — the one
+failure that is about configuration rather than about the file being summarised. `generateEmbeddings`
+**stops the whole loop** on it rather than swallowing it per file, because it fails identically for
+every remaining file; that swallowing is what used to make a retired model look like an index that
+silently never fills. Override with `GROQ_CHAT_MODEL`; check
+https://console.groq.com/docs/models when it 404s.
 
 Indexing flow (`src/lib/githubRepoLoader.tsx`):
 1. `loadGithubRepo` — LangChain `GithubRepoLoader` pulls the repo. **`githubToken` is required and
@@ -284,9 +288,10 @@ Background work runs through **BullMQ** against Redis (`REDIS_URL`), with `src/w
   `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `GITHUB_OAUTH_CLIENT_ID`,
   `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_APP_SLUG`, `ENCRYPTION_MASTER_KEY`, `REDIS_URL`.
   `bun run dev` and `bun run build` fail without them; `bun run check` does not.
-- **Blank summaries still get embedded.** `generateEmbeddings` tolerates a per-file failure by
-  pushing `null`, but a summarisation call that returns an *empty string* is not a failure — it gets
-  embedded and occupies an index slot carrying no information. There is no guard for this yet.
+- **A blank summary counts as a failed file.** `generateEmbeddings` tolerates a per-file failure by
+  pushing `null`, and a summarisation call returning an *empty string* is treated the same way rather
+  than being embedded — an empty summary would occupy an index slot carrying no information. The
+  embedding call is skipped entirely, so the file is simply absent from the index.
 - `bun run db:seed-key` is the **break-glass** path for giving an Installation a Provider Key; the
   ordinary path is `/dashboard`. It reads the key from `ANTHROPIC_API_KEY` or a prompt, never from
   argv, so it stays out of shell history. Keep it working — a web outage otherwise means nobody can

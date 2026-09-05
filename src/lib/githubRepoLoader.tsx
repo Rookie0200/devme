@@ -1,7 +1,11 @@
 import { GithubRepoLoader } from "@langchain/community/document_loaders/web/github";
 import { IGNORE_PATHS, shouldProcessFile } from "@/lib/utils";
 import { Document } from "@langchain/core/documents";
-import { generateEmbeddingsFromAi, summariseCode } from "@/lib/groqApi";
+import {
+    ChatModelUnavailableError,
+    generateEmbeddingsFromAi,
+    summariseCode,
+} from "@/lib/groqApi";
 
 /**
  * `githubToken` is required, and deliberately has no ambient fallback.
@@ -49,8 +53,13 @@ export const generateEmbeddings = async (docs:Document[])=>{
         
         try {
             const summary = await summariseCode(doc);
+            if (!summary.trim()) {
+                console.error(`❌ Empty summary for ${doc.metadata.source}, skipping`);
+                results.push(null);
+                continue;
+            }
             const embedding = await generateEmbeddingsFromAi(summary);
-            
+
             results.push({
                 summary,
                 embedding,
@@ -61,11 +70,23 @@ export const generateEmbeddings = async (docs:Document[])=>{
             
             console.log(`✅ Completed ${i + 1}/${docs.length}`);
         } catch (error) {
+            // Tolerating a per-file failure is right; tolerating a stale chat
+            // model is not. It fails identically for every remaining file, so
+            // continuing buys nothing and spends a repository's worth of calls
+            // producing the same 404 — and the swallowed-per-file shape is what
+            // made a retired model look like an index that never fills.
+            if (error instanceof ChatModelUnavailableError) {
+                console.error(`❌ ${error.message}`);
+                console.error(
+                    `   Stopping after ${i} of ${docs.length} files; this is configuration, not a bad file.`,
+                );
+                break;
+            }
             console.error(`❌ Failed to process ${doc.metadata.source}:`, error);
             // Continue with next file instead of failing the entire operation
             results.push(null);
         }
     }
-    
+
     return results.filter(Boolean);
 }
