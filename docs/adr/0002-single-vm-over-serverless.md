@@ -58,3 +58,21 @@ Postgres was already `healthy` by the time `web`/`worker` needed it — the race
 risk was not observed to occur, not observed to be handled. If a future reboot lands with Postgres
 slower to start (a larger index, a busier disk), and `web`/`worker` come up clean anyway, that is the
 evidence this note is missing.
+
+## Verified live: CI, the merge, and the redeploy
+
+**2026-09-05.** PR #30 (`feat/deploy-single-vm` → `main`) ran `check.yml` on a machine that is not the
+maintainer's laptop for the first time — check #7, green in 35s — and merging it re-ran the workflow
+against `main` itself — check #8, green in 36s. Condition 4 of the gate is closed by both runs existing
+and passing, not by either alone: the first proves the branch was clean, the second proves the merge
+commit is too.
+
+`./deploy.sh` then took `main` — including `b964657`, the `/sign-up` deletion — to the box: `migrate`
+ran and exited 0, `web` and `worker` recreated. An anonymous request to `/sign-up` 307s to `/sign-in`,
+which is `src/middleware.ts` redirecting any logged-out visitor away from a non-public route before
+Next.js ever resolves it — indistinguishable by itself from the page still existing. Signed in, the
+same URL renders Next.js's own 404. Condition 6 is closed on the authenticated check, not the curl.
+
+What remains: condition 1 (a stranger's pull request, reviewed with the laptop closed) and condition 5
+(`scripts/inspectRuns.ts` showing that stranger's Run), both of which need an actual invited user rather
+than another rehearsal.
